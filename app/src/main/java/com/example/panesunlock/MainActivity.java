@@ -334,44 +334,52 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private static final int REQ_PICK_EXT = 21;
+
     private void showAppPicker() {
-        PackageManager pm = getPackageManager();
-        Intent main = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-        List<ResolveInfo> ris = pm.queryIntentActivities(main, 0);
-        Map<String, String> appsMap = new LinkedHashMap<>();
-        for (ResolveInfo ri : ris) {
-            String pkg = ri.activityInfo.packageName;
-            if (pkg.equals(getPackageName())) continue;
-            if (!appsMap.containsKey(pkg)) {
-                appsMap.put(pkg, String.valueOf(ri.loadLabel(pm)));
+        startActivityForResult(new Intent(this, AppPickerActivity.class), REQ_PICK_EXT);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_EXT && resultCode == RESULT_OK && data != null) {
+            ArrayList<String> pkgs = data.getStringArrayListExtra("pkgs");
+            ArrayList<String> labels = data.getStringArrayListExtra("labels");
+            if (pkgs == null || pkgs.isEmpty()) return;
+            String smali = pendingSmali;
+            pendingSmali = null;
+            int added = 0;
+            String firstPkg = null, firstLabel = null;
+            for (int i = 0; i < pkgs.size(); i++) {
+                String pkg = pkgs.get(i), label = labels.get(i);
+                boolean exists = false;
+                for (UserHookStore.AppEntry a : extApps) {
+                    if (a.pkg.equals(pkg)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    UserHookStore.AppEntry e = new UserHookStore.AppEntry();
+                    e.pkg = pkg;
+                    e.label = label;
+                    extApps.add(e);
+                    added++;
+                }
+                if (firstPkg == null) {
+                    firstPkg = pkg;
+                    firstLabel = label;
+                }
             }
+            UserHookStore.save(this, extApps);
+            refreshExt();
+            if (added > 0) {
+                Toast.makeText(this, "已添加 " + added + " 个应用", Toast.LENGTH_SHORT).show();
+            }
+            // 带上 smali 预填进入第一个选中应用的配置页
+            openExtEditor(firstPkg, firstLabel);
         }
-
-        View view = getLayoutInflater().inflate(R.layout.dialog_pick_app, null);
-        RecyclerView list = view.findViewById(R.id.pick_list);
-        EditText search = view.findViewById(R.id.pick_search);
-        List<String> pkgs = new ArrayList<>(appsMap.keySet());
-        PickerAdapter adapter = new PickerAdapter(appsMap, pkgs);
-        list.setLayoutManager(new LinearLayoutManager(this));
-        list.setAdapter(adapter);
-        search.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void afterTextChanged(Editable s) {
-                adapter.refilter(s.toString());
-            }
-        });
-
-        final AlertDialog dlg = new AlertDialog.Builder(this)
-                .setTitle("选择目标应用")
-                .setView(view)
-                .setNegativeButton("取消", null)
-                .create();
-        adapter.setOnPick((pkg, label) -> {
-            dlg.dismiss();
-            openExtEditor(pkg, label);
-        });
-        dlg.show();
     }
 
     private void openExtEditor(String pkg, String label) {
@@ -500,74 +508,6 @@ public class MainActivity extends AppCompatActivity {
         send.setType("text/plain");
         send.putExtra(Intent.EXTRA_TEXT, json);
         startActivity(Intent.createChooser(send, "分享配置（已同时复制到剪贴板）"));
-    }
-
-    private interface OnPick {
-        void pick(String pkg, String label);
-    }
-
-    private class PickerAdapter extends RecyclerView.Adapter<PickerAdapter.VH> {
-        private final Map<String, String> all;
-        private final List<String> shown = new ArrayList<>();
-        private OnPick onPick;
-
-        PickerAdapter(Map<String, String> all, List<String> initial) {
-            this.all = all;
-            shown.addAll(initial);
-        }
-
-        void setOnPick(OnPick l) {
-            onPick = l;
-        }
-
-        void refilter(String q) {
-            String query = q == null ? "" : q.toLowerCase();
-            shown.clear();
-            for (Map.Entry<String, String> e : all.entrySet()) {
-                if (query.isEmpty()
-                        || e.getKey().toLowerCase().contains(query)
-                        || e.getValue().toLowerCase().contains(query)) {
-                    shown.add(e.getKey());
-                }
-            }
-            notifyDataSetChanged();
-        }
-
-        @Override
-        public VH onCreateViewHolder(ViewGroup parent, int viewType) {
-            return new VH(LayoutInflater.from(MainActivity.this)
-                    .inflate(R.layout.item_ext, parent, false));
-        }
-
-        @Override
-        public void onBindViewHolder(VH h, int pos) {
-            final String pkg = shown.get(pos);
-            final String label = all.get(pkg);
-            h.avatar.setText(label == null || label.isEmpty() ? "?" : label.substring(0, 1));
-            h.title.setText(label);
-            h.pkg.setText(pkg);
-            h.count.setText("");
-            h.itemView.setOnClickListener(v -> {
-                if (onPick != null) onPick.pick(pkg, label);
-            });
-        }
-
-        @Override
-        public int getItemCount() {
-            return shown.size();
-        }
-
-        class VH extends RecyclerView.ViewHolder {
-            TextView avatar, title, pkg, count;
-
-            VH(View v) {
-                super(v);
-                avatar = v.findViewById(R.id.item_avatar);
-                title = v.findViewById(R.id.item_title);
-                pkg = v.findViewById(R.id.item_pkg);
-                count = v.findViewById(R.id.item_count);
-            }
-        }
     }
 
     private class ExtAdapter extends RecyclerView.Adapter<ExtAdapter.VH> {
