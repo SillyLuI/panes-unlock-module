@@ -14,6 +14,38 @@
 
         <TextView style="@style/PageTitle" android:text="拓展" />
 
+        <!-- 作用域提示：未勾选 LSPosed 作用域时 Hook 不会生效 -->
+        <LinearLayout
+            android:id="@+id/ext_scope_tip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_card2"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="12dp">
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="目标应用需在 LSPosed 作用域中勾选"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="未勾选则 Hook 不会生效，点此前往设置"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- 搜索框 -->
         <LinearLayout
             android:layout_width="match_parent"
