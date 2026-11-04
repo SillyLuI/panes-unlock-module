@@ -24,9 +24,23 @@ public class UserHookStore {
 
     /** 模式常量 */
     public static final String MODE_RETURN = "return_value";
+    public static final String MODE_RETURN_AFTER = "return_value_after";
     public static final String MODE_PARAMS = "params";
     public static final String MODE_INTERCEPT = "intercept";
     public static final String MODE_STATIC = "static_field";
+    public static final String MODE_INSTANCE = "instance_field";
+    public static final String MODE_LOG_PARAMS = "log_params";
+    public static final String MODE_LOG_RETURN = "log_return";
+    public static final String MODE_LOG_BOTH = "log_both";
+    public static final String MODE_LOG_STATIC = "log_static";
+    public static final String MODE_LOG_INSTANCE = "log_instance";
+
+    /** 全部模式（展示顺序与选择弹窗一致） */
+    public static final String[] ALL_MODES = {
+            MODE_RETURN, MODE_RETURN_AFTER, MODE_PARAMS, MODE_STATIC, MODE_INSTANCE,
+            MODE_INTERCEPT, MODE_LOG_PARAMS, MODE_LOG_RETURN, MODE_LOG_BOTH,
+            MODE_LOG_STATIC, MODE_LOG_INSTANCE
+    };
 
     /** “空值”标记：按目标类型转成 0/false/""/空集合 */
     public static final Object EMPTY = new Object();
@@ -38,6 +52,7 @@ public class UserHookStore {
         public String paramTypes = "";
         public String value = "";
         public String fieldName = "";
+        public String memo = "";
     }
 
     public static class AppEntry {
@@ -93,6 +108,7 @@ public class UserHookStore {
                         ho.put("paramTypes", h.paramTypes);
                         ho.put("value", h.value);
                         ho.put("fieldName", h.fieldName);
+                        ho.put("memo", h.memo);
                         hs.put(ho);
                     }
                     o.put("hooks", hs);
@@ -210,11 +226,19 @@ public class UserHookStore {
         h.paramTypes = pt;
         h.value = firstNonEmpty(o, "value", "modifyValue", "returnValue", "newValue");
         h.fieldName = firstNonEmpty(o, "fieldName", "staticField", "field");
+        h.memo = firstNonEmpty(o, "memo", "description", "desc", "note", "remark");
         h.mode = normalizeMode(firstNonEmpty(o, "mode", "hookMode", "type"));
         if (h.mode.isEmpty()) h.mode = h.value.isEmpty() ? MODE_INTERCEPT : MODE_RETURN;
         if (h.className.isEmpty()) return null;
-        if (h.methodName.isEmpty() && !MODE_STATIC.equals(h.mode)) return null;
+        if (h.methodName.isEmpty() && !methodOptional(h.mode)) return null;
         return h;
+    }
+
+    /** 静态变量与“记录”类模式允许不填方法名 */
+    private static boolean methodOptional(String mode) {
+        return MODE_STATIC.equals(mode) || MODE_LOG_PARAMS.equals(mode)
+                || MODE_LOG_RETURN.equals(mode) || MODE_LOG_BOTH.equals(mode)
+                || MODE_LOG_STATIC.equals(mode) || MODE_LOG_INSTANCE.equals(mode);
     }
 
     private static String normalizeMode(String m) {
@@ -223,12 +247,26 @@ public class UserHookStore {
         switch (s) {
             case "return": case "return_value": case "返回值": case "hook返回值":
                 return MODE_RETURN;
+            case "return_value_after": case "return+": case "返回值+": case "hook返回值+":
+                return MODE_RETURN_AFTER;
             case "params": case "param": case "参数": case "hook参数值": case "参数替换":
                 return MODE_PARAMS;
             case "intercept": case "block": case "拦截": case "拦截执行":
                 return MODE_INTERCEPT;
             case "static": case "static_field": case "staticfield": case "静态": case "静态变量": case "hook静态变量":
                 return MODE_STATIC;
+            case "instance": case "instance_field": case "instancefield": case "实例": case "实例变量": case "hook实例变量":
+                return MODE_INSTANCE;
+            case "log_params": case "记录参数值":
+                return MODE_LOG_PARAMS;
+            case "log_return": case "记录返回值":
+                return MODE_LOG_RETURN;
+            case "log_both": case "记录参返":
+                return MODE_LOG_BOTH;
+            case "log_static": case "记录静态变量":
+                return MODE_LOG_STATIC;
+            case "log_instance": case "记录实例变量":
+                return MODE_LOG_INSTANCE;
             default:
                 return "";
         }
@@ -345,10 +383,17 @@ public class UserHookStore {
 
     /** 模式显示名 */
     public static String modeLabel(String mode) {
-        if (MODE_PARAMS.equals(mode)) return "参数替换";
+        if (MODE_RETURN_AFTER.equals(mode)) return "Hook 返回值+";
+        if (MODE_PARAMS.equals(mode)) return "Hook 参数值";
         if (MODE_INTERCEPT.equals(mode)) return "拦截执行";
-        if (MODE_STATIC.equals(mode)) return "静态变量";
-        return "返回固定值";
+        if (MODE_STATIC.equals(mode)) return "Hook 静态变量";
+        if (MODE_INSTANCE.equals(mode)) return "Hook 实例变量";
+        if (MODE_LOG_PARAMS.equals(mode)) return "记录参数值";
+        if (MODE_LOG_RETURN.equals(mode)) return "记录返回值";
+        if (MODE_LOG_BOTH.equals(mode)) return "记录参返";
+        if (MODE_LOG_STATIC.equals(mode)) return "记录静态变量";
+        if (MODE_LOG_INSTANCE.equals(mode)) return "记录实例变量";
+        return "Hook 返回值";
     }
 
     public static Map<String, List<HookEntry>> toMap(List<AppEntry> apps) {
