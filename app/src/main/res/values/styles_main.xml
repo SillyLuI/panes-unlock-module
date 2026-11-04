@@ -12,7 +12,6 @@
     <style name="NavIcon">
         <item name="android:layout_width">22dp</item>
         <item name="android:layout_height">22dp</item>
-        <item name="app:tint">@color/text_secondary</item>
     </style>
 
     <style name="NavText">
