@@ -75,14 +75,15 @@ public class UserHookStore {
 
     public static void save(Context ctx, List<AppEntry> apps) {
         try {
-            prefs(ctx).edit().putString(KEY_CONFIG, toJson(apps)).apply();
+            // 必须同步落盘：Xposed 侧通过 XSharedPreferences 读取，apply() 异步会导致读不到/读到旧值
+            prefs(ctx).edit().putString(KEY_CONFIG, toJson(apps)).commit();
         } catch (Throwable ignored) {
         }
         makeWorldReadable(ctx);
     }
 
     public static void setBuiltinEnabled(Context ctx, String pkg, boolean enabled) {
-        prefs(ctx).edit().putBoolean("enabled_" + pkg, enabled).apply();
+        prefs(ctx).edit().putBoolean("enabled_" + pkg, enabled).commit();
         makeWorldReadable(ctx);
     }
 
