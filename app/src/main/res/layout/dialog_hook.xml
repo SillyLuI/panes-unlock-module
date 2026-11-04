@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="8dp">
+
+        <TextView style="@style/FieldLabel" android:text="模式" />
+        <Spinner
+            android:id="@+id/dh_mode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_search"
+            android:padding="8dp" />
+
+        <TextView style="@style/FieldLabel" android:text="类名（如 com.xxx.a.b）" />
+        <EditText android:id="@+id/dh_class" style="@style/FieldInput"
+            android:inputType="text"
+            android:maxLines="1" />
+
+        <TextView style="@style/FieldLabel" android:text="方法名（构造方法填 &lt;init&gt;；* 表示全部）" />
+        <EditText android:id="@+id/dh_method" style="@style/FieldInput"
+            android:inputType="text"
+            android:maxLines="1" />
+
+        <TextView style="@style/FieldLabel" android:text="参数类型（逗号分隔，如 java.lang.String,int；留空或 * 表示全部重载）" />
+        <EditText android:id="@+id/dh_params" style="@style/FieldInput"
+            android:inputType="text"
+            android:maxLines="1" />
+
+        <TextView style="@style/FieldLabel" android:text="修改值（true/false、42、3.14、42L、3.14f、10086s、null、empty）" />
+        <EditText android:id="@+id/dh_value" style="@style/FieldInput"
+            android:inputType="text"
+            android:maxLines="1" />
+
+        <TextView android:id="@+id/dh_field_label" style="@style/FieldLabel" android:text="静态字段名（静态变量模式）" />
+        <EditText android:id="@+id/dh_field" style="@style/FieldInput"
+            android:inputType="text"
+            android:maxLines="1" />
+    </LinearLayout>
+</ScrollView>
