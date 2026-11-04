@@ -72,13 +72,55 @@
             android:layout_height="match_parent"
             android:layout_marginTop="14dp"
             android:clipToPadding="false"
-            android:paddingBottom="90dp"
+            android:paddingBottom="120dp"
             android:overScrollMode="never"
             android:visibility="gone" />
     </LinearLayout>
 
+    <!-- FAB 展开菜单 -->
     <LinearLayout
-        android:id="@+id/ext_fab"
+        android:id="@+id/ext_fab_menu"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp"
+        android:gravity="end|center_vertical"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout style="@style/FabMenuRow">
+            <TextView style="@style/FabMenuLabel" android:text="添加配置" />
+            <FrameLayout style="@style/FabMenuBtn" android:id="@+id/fab_addcfg">
+                <ImageView style="@style/FabMenuIcon" android:src="@drawable/ic_add" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <LinearLayout style="@style/FabMenuRow">
+            <TextView style="@style/FabMenuLabel" android:text="导入配置" />
+            <FrameLayout style="@style/FabMenuBtn" android:id="@+id/fab_import">
+                <ImageView style="@style/FabMenuIcon" android:src="@drawable/ic_clipboard" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <LinearLayout style="@style/FabMenuRow">
+            <TextView style="@style/FabMenuLabel" android:text="从网络导入配置" />
+            <FrameLayout style="@style/FabMenuBtn" android:id="@+id/fab_net">
+                <ImageView style="@style/FabMenuIcon" android:src="@drawable/ic_cloud" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <LinearLayout style="@style/FabMenuRow">
+            <TextView style="@style/FabMenuLabel" android:text="分享配置" />
+            <FrameLayout style="@style/FabMenuBtn" android:id="@+id/fab_share">
+                <ImageView style="@style/FabMenuIcon" android:src="@drawable/ic_share" />
+            </FrameLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 主 FAB（点击第一下先给“添加配置”按钮挂监听，代码中处理） -->
+    <LinearLayout
+        android:id="@+id/fab_add"
         android:layout_width="60dp"
         android:layout_height="60dp"
         android:layout_gravity="bottom|end"
@@ -88,6 +130,7 @@
         android:elevation="8dp"
         android:gravity="center">
         <ImageView
+            android:id="@+id/ext_fab_icon"
             android:layout_width="26dp"
             android:layout_height="26dp"
             android:src="@drawable/ic_add"
