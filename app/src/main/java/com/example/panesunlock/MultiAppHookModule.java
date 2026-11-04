@@ -83,7 +83,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
 
         // 用户自定义 hook（拓展页配置，SimpleHook 式）
         List<UserHookStore.HookEntry> userRules = userRulesFor(pkg);
-        if (userRules != null) {
+        if (userRules != null && !userRules.isEmpty()) {
+            XposedBridge.log("[PanesUnlock] " + pkg + " 已注入，应用 " + userRules.size() + " 条拓展 hook");
             for (UserHookStore.HookEntry h : userRules) {
                 applyUserRule(h, lpparam);
             }
@@ -116,26 +117,98 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static List<UserHookStore.HookEntry> userRulesFor(String pkg) {
         try {
             XSharedPreferences p = xPrefs();
-            if (p == null) return null;
+            if (p == null) {
+                XposedBridge.log("[PanesUnlock] 无法读取模块配置（XSharedPreferences 不可用）");
+                return null;
+            }
             String json = p.getString(UserHookStore.KEY_CONFIG, null);
             if (json == null || json.trim().isEmpty()) return null;
             if (USER_RULES == null || !json.equals(LOADED_USER_JSON)) {
                 LOADED_USER_JSON = json;
                 USER_RULES = UserHookStore.toMap(UserHookStore.parseConfig(json));
+                XposedBridge.log("[PanesUnlock] 配置已加载，共 " + USER_RULES.size() + " 个目标应用");
             }
-            return USER_RULES.get(pkg);
+            List<UserHookStore.HookEntry> rules = USER_RULES.get(pkg);
+            if (rules == null) {
+                XposedBridge.log("[PanesUnlock] 当前进程 " + pkg + " 不在拓展配置中；已配置: " + USER_RULES.keySet());
+            }
+            return rules;
         } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 读取拓展配置异常: " + t);
             return null;
         }
     }
 
-    private void applyUserRule(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
-        try {
-            if (h == null || h.className == null || h.className.isEmpty()) return;
-            Class<?> clazz = XposedHelpers.findClass(h.className, lp.classLoader);
+    /** 待类可用后再挂的规则（加固 / 动态 dex 场景下 handleLoadPackage 时类还不存在） */
+    private static class PendingRule {
+        final UserHookStore.HookEntry h;
+        final XC_LoadPackage.LoadPackageParam lp;
 
+        PendingRule(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
+            this.h = h;
+            this.lp = lp;
+        }
+    }
+
+    private static final List<PendingRule> PENDING_RULES = new ArrayList<>();
+    private static boolean classLoaderHooked = false;
+
+    private void applyUserRule(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
+        if (h == null || h.className == null || h.className.isEmpty()) return;
+        try {
+            Class<?> clazz = XposedHelpers.findClass(h.className, lp.classLoader);
+            applyUserRuleToClass(clazz, h, lp);
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 类暂不可用，等待加载: " + h.className);
+            hookWhenClassLoaded(h, lp);
+        }
+    }
+
+    /** 监听 ClassLoader.loadClass，目标类真正被加载时补挂 hook */
+    private void hookWhenClassLoaded(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
+        synchronized (PENDING_RULES) {
+            PENDING_RULES.add(new PendingRule(h, lp));
+            if (classLoaderHooked) return;
+            classLoaderHooked = true;
+        }
+        try {
+            XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    Object r = p.getResult();
+                    if (!(r instanceof Class)) return;
+                    String name = ((Class<?>) r).getName();
+                    List<PendingRule> matched = new ArrayList<>();
+                    synchronized (PENDING_RULES) {
+                        java.util.Iterator<PendingRule> it = PENDING_RULES.iterator();
+                        while (it.hasNext()) {
+                            PendingRule pr = it.next();
+                            if (name.equals(pr.h.className)) {
+                                matched.add(pr);
+                                it.remove();
+                            }
+                        }
+                    }
+                    for (PendingRule pr : matched) {
+                        try {
+                            XposedBridge.log("[PanesUnlock] 延迟命中类加载: " + name);
+                            applyUserRuleToClass((Class<?>) r, pr.h, pr.lp);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 注册延迟 hook 失败: " + t);
+        }
+    }
+
+    private void applyUserRuleToClass(Class<?> clazz, UserHookStore.HookEntry h,
+                                      XC_LoadPackage.LoadPackageParam lp) {
+        try {
             if (UserHookStore.MODE_STATIC.equals(h.mode)) {
                 applyStaticField(clazz, h);
+                XposedBridge.log("[PanesUnlock] 已 hook 静态变量 " + h.className + "." + h.fieldName);
                 return;
             }
 
@@ -157,6 +230,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 } else {
                     XposedBridge.hookAllConstructors(clazz, hook);
                 }
+                XposedBridge.log("[PanesUnlock] 已 hook 构造 " + h.className);
                 return;
             }
 
@@ -164,18 +238,23 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 for (Method m : clazz.getDeclaredMethods()) {
                     XposedBridge.hookMethod(m, hook);
                 }
+                XposedBridge.log("[PanesUnlock] 已 hook 全部方法 " + h.className);
                 return;
             }
             if (pts == null) {
-                XposedBridge.hookAllMethods(clazz, mn, hook);
+                java.util.Set<XC_MethodHook.Unhook> hooks = XposedBridge.hookAllMethods(clazz, mn, hook);
+                XposedBridge.log("[PanesUnlock] 已 hook " + h.className + "." + mn
+                        + "，匹配 " + (hooks == null ? 0 : hooks.size()) + " 个重载");
             } else {
                 Object[] args = new Object[pts.length + 1];
                 System.arraycopy(pts, 0, args, 0, pts.length);
                 args[pts.length] = hook;
                 XposedHelpers.findAndHookMethod(clazz, mn, args);
+                XposedBridge.log("[PanesUnlock] 已 hook " + h.className + "." + mn + "（精确签名）");
             }
-        } catch (Throwable ignored) {
-            // 类/方法不存在时静默跳过
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] hook 失败 " + h.className + "."
+                    + h.methodName + " (" + h.mode + "): " + t);
         }
     }
 
