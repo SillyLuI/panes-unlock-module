@@ -1,5 +1,9 @@
 package com.example.panesunlock;
 
+import android.content.Context;
+import android.provider.Settings;
+
+import de.robv.android.xposed.AndroidAppHelper;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
@@ -8,14 +12,15 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 /**
  * 格窗工作台 (io.github.yishisanren.panes) 解锁模块。
  *
- * 原理：授权状态（LICENSE_UNLOCKED / LICENSE_TRIAL）由宿主 / SystemUI 通过
- * android.os.BaseBundle 的带参读取（getBoolean / containsKey / getLong）下发给客户端。
- * SimpleHook 只能 hook 无参方法，够不到这些带参读取，因此改用 LSPosed 在运行时
- * 按 key 条件强制返回值。
+ * 两条解锁路径（互为补充，确保万无一失）：
+ *  1) 全局按 key 强制 android.os.BaseBundle 的读取（getBoolean / containsKey /
+ *     getLong / getString），同时覆盖 App 进程与 SystemUI 宿主进程 —— 这是主机制，
+ *     因为授权状态本身就是靠这些 Bundle 读取下发的。
+ *  2) 在目标 App 进程内，生成合法的“永久试用令牌”并写入
+ *     Settings.Global(panes_trial_v1) 与 Settings.Secure(sysui_tile_layout_rev)，
+ *     让 App 自己的 yf.h()/a() 校验也能通过（HMAC 密钥硬编码在 App 内，可复现）。
  *
- * 注意：本 App 客户端本身没有“功能级”闸门（yf.c()/a() 为死代码），
- * 因此强制这些 Bundle 读取即可让客户端视为已解锁 / 试用永不过期；
- * 若宿主侧另有独立校验（读 SP / 签名），本模块再叠加对 yf.* 的强制。
+ * 注意：客户端本身没有“功能级”闸门，强制这些读取即可让 App 视为已解锁。
  */
 public class PanesUnlockModule implements IXposedHookLoadPackage {
 
@@ -26,24 +31,24 @@ public class PanesUnlockModule implements IXposedHookLoadPackage {
     private static final String K_MACHINE  = "io.github.yishisanren.panes.extra.LICENSE_MACHINE";
     private static final long   TRIAL_FOREVER = 4102444800000L; // 2100-01-01
 
-    private static boolean baseHooked = false;
-
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        // 1) 全局（按 key 条件）拦截 BaseBundle 读取 —— 同时覆盖 App 与 SystemUI 宿主进程
-        if (!baseHooked) {
-            baseHooked = true;
-            try {
-                Class<?> baseBundle = XposedHelpers.findClass("android.os.BaseBundle", lpparam.classLoader);
-                hookBundle(baseBundle);
-            } catch (Throwable ignored) { /* 框架类一定存在，理论上不会失败 */ }
-        }
+        // 1) 主机制：强制 BaseBundle 读取（App + SystemUI 宿主）
+        try {
+            Class<?> baseBundle = XposedHelpers.findClass("android.os.BaseBundle", lpparam.classLoader);
+            hookBundle(baseBundle);
+        } catch (Throwable ignored) { /* 框架类必然存在 */ }
 
-        // 2) 仅 App 进程：顺手把授权类 yf 的判定也顶成 true（防御性，死代码也无妨）
+        // 2) 仅在目标 App 进程内：注入合法永久试用令牌（best-effort）
         if (TARGET.equals(lpparam.packageName)) {
-            forceTrue(lpparam.classLoader, "yf", "c");
-            forceTrue(lpparam.classLoader, "yf", "a");
-            forceTrue(lpparam.classLoader, "yf", "f");
+            try {
+                Context ctx = AndroidAppHelper.currentApplication();
+                if (ctx != null) {
+                    String token = TrialToken.generate();
+                    Settings.Global.putString(ctx.getContentResolver(), "panes_trial_v1", token);
+                    Settings.Secure.putString(ctx.getContentResolver(), "sysui_tile_layout_rev", token);
+                }
+            } catch (Throwable ignored) { /* 权限不足等情况下跳过，不影响主机制 */ }
         }
     }
 
@@ -80,19 +85,6 @@ public class PanesUnlockModule implements IXposedHookLoadPackage {
         XposedHelpers.findAndHookMethod(baseBundle, "getLong", String.class, longHook);
         XposedHelpers.findAndHookMethod(baseBundle, "getLong", String.class, long.class, longHook);
         XposedHelpers.findAndHookMethod(baseBundle, "getString", String.class, strHook);
-    }
-
-    /** 把指定无参布尔方法（若存在）的返回值强制为 true。 */
-    private void forceTrue(ClassLoader cl, String className, String methodName) {
-        try {
-            XposedHelpers.findAndHookMethod(className, cl, methodName, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam p) {
-                    if (p.getResult() instanceof Boolean) {
-                        p.setResult(true);
-                    }
-                }
-            });
-        } catch (Throwable ignored) { /* 该类/方法在此版本不存在则跳过 */ }
+        XposedHelpers.findAndHookMethod(baseBundle, "getString", String.class, String.class, strHook);
     }
 }
