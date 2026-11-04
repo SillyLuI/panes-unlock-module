@@ -160,6 +160,10 @@ public class UserHookStore {
                         AppEntry a = parseApp(apps.optJSONObject(i));
                         if (a != null) out.add(a);
                     }
+                } else if (root.has("packageName") || root.has("pkg")) {
+                    // SimpleHook 单应用导出：直接带 packageName + configs
+                    AppEntry a = parseApp(root);
+                    if (a != null) out.add(a);
                 } else {
                     // 兼容：键为包名、值为 hook 数组的扁平格式
                     Iterator<String> keys = root.keys();
@@ -190,10 +194,8 @@ public class UserHookStore {
         a.pkg = firstNonEmpty(o, "pkg", "packageName", "package", "appPackage");
         a.label = firstNonEmpty(o, "label", "name", "appName", "appName");
         if (a.label.isEmpty()) a.label = a.pkg;
-        a.enabled = o.optBoolean("enabled", true);
-        JSONArray hs = o.optJSONArray("hooks");
-        if (hs == null) hs = o.optJSONArray("hookList");
-        if (hs == null) hs = o.optJSONArray("configs");
+        a.enabled = true; // 导入的配置默认启用（启用开关在模块侧单独管理）
+        JSONArray hs = getHookArray(o);
         if (hs != null) {
             for (int i = 0; i < hs.length(); i++) {
                 HookEntry h = parseHook(hs.optJSONObject(i));
@@ -204,16 +206,42 @@ public class UserHookStore {
         return a;
     }
 
+    /** 取 hook 数组：兼容数组或「字符串内嵌 JSON 数组/对象」（SimpleHook 的 configs 是字符串） */
+    private static JSONArray getHookArray(JSONObject o) {
+        for (String key : new String[]{"hooks", "hookList", "configs", "config", "rules", "configList"}) {
+            Object v = o.opt(key);
+            if (v == null) continue;
+            if (v instanceof JSONArray) return (JSONArray) v;
+            if (v instanceof String) {
+                String str = ((String) v).trim();
+                if (str.isEmpty()) continue;
+                try {
+                    Object parsed = new org.json.JSONTokener(str).nextValue();
+                    if (parsed instanceof JSONArray) return (JSONArray) parsed;
+                    if (parsed instanceof JSONObject) {
+                        JSONArray wrap = new JSONArray();
+                        wrap.put(parsed);
+                        return wrap;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
     /** 宽容解析单条 hook：兼容 SimpleHook 常见字段名与中文模式名 */
     private static HookEntry parseHook(JSONObject o) {
         if (o == null) return null;
         HookEntry h = new HookEntry();
-        h.className = firstNonEmpty(o, "className", "class", "cls");
+        h.className = firstNonEmpty(o, "className", "class", "cls", "classname");
         h.methodName = firstNonEmpty(o, "methodName", "method");
         String pt = firstNonEmpty(o, "paramTypes", "params", "parameterTypes", "paramType");
         if (pt.isEmpty()) {
             JSONArray pa = o.optJSONArray("paramTypes");
             if (pa == null) pa = o.optJSONArray("params");
+            if (pa == null) pa = o.optJSONArray("methodParameters");
+            if (pa == null) pa = o.optJSONArray("parameters");
             if (pa != null) {
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < pa.length(); i++) {
@@ -224,11 +252,40 @@ public class UserHookStore {
             }
         }
         h.paramTypes = pt;
-        h.value = firstNonEmpty(o, "value", "modifyValue", "returnValue", "newValue");
-        h.fieldName = firstNonEmpty(o, "fieldName", "staticField", "field");
+
+        // SimpleHook 中值字段多样：返回值/静态字段值/参数值都可能出现
+        h.value = firstNonEmpty(o, "value", "modifyValue", "returnValue", "newValue",
+                "resultValues", "resultValue", "staticFieldValues", "staticFieldValue", "paramValues");
+        String field = firstNonEmpty(o, "fieldName", "staticField", "field", "staticFieldName");
+        h.fieldName = field;
         h.memo = firstNonEmpty(o, "memo", "description", "desc", "note", "remark");
-        h.mode = normalizeMode(firstNonEmpty(o, "mode", "hookMode", "type"));
-        if (h.mode.isEmpty()) h.mode = h.value.isEmpty() ? MODE_INTERCEPT : MODE_RETURN;
+
+        // 模式判定：优先用显式 type/mode，否则按字段存在性推断
+        String hookType = firstNonEmpty(o, "mode", "hookMode", "type", "hookType");
+        String hookPoint = firstNonEmpty(o, "hookPoint", "hookpoint");
+        boolean hasStatic = !field.isEmpty();
+        boolean hasParam = !firstNonEmpty(o, "paramValues", "paramValue").isEmpty()
+                || MODE_PARAMS.equals(normalizeMode(hookType));
+        boolean hasResult = !h.value.isEmpty();
+
+        if (!hookType.isEmpty()) {
+            h.mode = normalizeMode(hookType);
+        }
+        if (h.mode.isEmpty()) {
+            if (hasStatic) {
+                h.mode = MODE_STATIC;
+            } else if (hasParam) {
+                h.mode = MODE_PARAMS;
+            } else if (hasResult) {
+                // hookPoint="after" → 方法执行后改返回值
+                h.mode = "after".equalsIgnoreCase(hookPoint) ? MODE_RETURN_AFTER : MODE_RETURN;
+            } else {
+                h.mode = MODE_INTERCEPT;
+            }
+        } else if (MODE_RETURN.equals(h.mode) && "after".equalsIgnoreCase(hookPoint)) {
+            h.mode = MODE_RETURN_AFTER;
+        }
+
         if (h.className.isEmpty()) return null;
         if (h.methodName.isEmpty() && !methodOptional(h.mode)) return null;
         return h;
