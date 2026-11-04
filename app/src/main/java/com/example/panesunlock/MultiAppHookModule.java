@@ -13,6 +13,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -138,13 +139,16 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 return;
             }
 
-            XC_MethodHook hook = makeUserHook(h);
+            XC_MethodHook hook = makeUserHook(h, lp.packageName);
             Class<?>[] pts = parseParamTypes(h.paramTypes, lp.classLoader);
             if (UserHookStore.MODE_PARAMS.equals(h.mode) && pts == null) {
                 return; // 参数替换必须能确定参数类型
             }
 
-            if ("<init>".equals(h.methodName)) {
+            String mn = h.methodName == null ? "" : h.methodName.trim();
+            if (mn.isEmpty()) mn = "*"; // 记录类/静态变量等允许不填方法名 → hook 全部方法
+
+            if ("<init>".equals(mn)) {
                 if (pts != null) {
                     Object[] args = new Object[pts.length + 1];
                     System.arraycopy(pts, 0, args, 0, pts.length);
@@ -156,19 +160,19 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 return;
             }
 
-            if ("*".equals(h.methodName)) {
+            if ("*".equals(mn)) {
                 for (Method m : clazz.getDeclaredMethods()) {
                     XposedBridge.hookMethod(m, hook);
                 }
                 return;
             }
             if (pts == null) {
-                XposedBridge.hookAllMethods(clazz, h.methodName, hook);
+                XposedBridge.hookAllMethods(clazz, mn, hook);
             } else {
                 Object[] args = new Object[pts.length + 1];
                 System.arraycopy(pts, 0, args, 0, pts.length);
                 args[pts.length] = hook;
-                XposedHelpers.findAndHookMethod(clazz, h.methodName, args);
+                XposedHelpers.findAndHookMethod(clazz, mn, args);
             }
         } catch (Throwable ignored) {
             // 类/方法不存在时静默跳过
@@ -186,19 +190,25 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         }
     }
 
-    private XC_MethodHook makeUserHook(final UserHookStore.HookEntry h) {
+    private XC_MethodHook makeUserHook(final UserHookStore.HookEntry h, final String pkg) {
         return new XC_MethodHook() {
+            private String tag() {
+                return "[PanesUnlock][" + pkg + "] " + h.className + "."
+                        + (h.methodName == null || h.methodName.isEmpty() ? "*" : h.methodName);
+            }
+
             @Override
             protected void beforeHookedMethod(MethodHookParam p) {
                 try {
                     Class<?> rt = (p.method instanceof Method)
                             ? ((Method) p.method).getReturnType()
                             : (p.method instanceof Constructor ? void.class : Object.class);
-                    if (UserHookStore.MODE_RETURN.equals(h.mode)) {
+                    String m = h.mode;
+                    if (UserHookStore.MODE_RETURN.equals(m)) {
                         p.setResult(UserHookStore.coerce(UserHookStore.parseValue(h.value), rt));
-                    } else if (UserHookStore.MODE_INTERCEPT.equals(h.mode)) {
+                    } else if (UserHookStore.MODE_INTERCEPT.equals(m)) {
                         p.setResult(UserHookStore.defaultValueFor(rt));
-                    } else if (UserHookStore.MODE_PARAMS.equals(h.mode)) {
+                    } else if (UserHookStore.MODE_PARAMS.equals(m)) {
                         String[] vals = h.value.split(",", -1);
                         for (int i = 0; i < vals.length && i < p.args.length; i++) {
                             String s = vals[i].trim();
@@ -207,6 +217,46 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                             p.args[i] = (p.args[i] != null)
                                     ? UserHookStore.coerce(parsed, p.args[i].getClass())
                                     : parsed;
+                        }
+                    } else if (UserHookStore.MODE_LOG_PARAMS.equals(m) || UserHookStore.MODE_LOG_BOTH.equals(m)) {
+                        StringBuilder sb = new StringBuilder(tag() + " 参数: ");
+                        for (int i = 0; i < p.args.length; i++) {
+                            sb.append("arg").append(i).append("=").append(p.args[i]).append(" ");
+                        }
+                        XposedBridge.log(sb.toString());
+                    } else if (UserHookStore.MODE_LOG_STATIC.equals(m)) {
+                        try {
+                            Field f = XposedHelpers.findField(((Member) p.method).getDeclaringClass(), h.fieldName);
+                            f.setAccessible(true);
+                            XposedBridge.log(tag() + " 静态字段 " + h.fieldName + " = " + f.get(null));
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    String m = h.mode;
+                    if (UserHookStore.MODE_RETURN_AFTER.equals(m)) {
+                        Class<?> rt = (p.method instanceof Method)
+                                ? ((Method) p.method).getReturnType() : Object.class;
+                        p.setResult(UserHookStore.coerce(UserHookStore.parseValue(h.value), rt));
+                    } else if (UserHookStore.MODE_INSTANCE.equals(m)) {
+                        if (p.thisObject != null && h.fieldName != null && !h.fieldName.isEmpty()) {
+                            Field f = XposedHelpers.findField(p.thisObject.getClass(), h.fieldName);
+                            f.setAccessible(true);
+                            f.set(p.thisObject, UserHookStore.coerce(UserHookStore.parseValue(h.value), f.getType()));
+                        }
+                    } else if (UserHookStore.MODE_LOG_RETURN.equals(m) || UserHookStore.MODE_LOG_BOTH.equals(m)) {
+                        XposedBridge.log(tag() + " 返回: " + p.getResult());
+                    } else if (UserHookStore.MODE_LOG_INSTANCE.equals(m)) {
+                        if (p.thisObject != null && h.fieldName != null && !h.fieldName.isEmpty()) {
+                            Field f = XposedHelpers.findField(p.thisObject.getClass(), h.fieldName);
+                            f.setAccessible(true);
+                            XposedBridge.log(tag() + " 实例字段 " + h.fieldName + " = " + f.get(p.thisObject));
                         }
                     }
                 } catch (Throwable ignored) {
