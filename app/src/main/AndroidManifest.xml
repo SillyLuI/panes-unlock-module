@@ -2,22 +2,33 @@
     package="com.example.panesunlock">
 
     <application
-        android:allowBackup="false"
-        android:hasCode="true">
+        android:allowBackup="true"
+        android:hasCode="true"
+        android:label="格窗解锁模块">
 
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
         <meta-data
             android:name="xposedminversion"
-            android:value="82" />
+            android:value="93" />
         <meta-data
             android:name="xposeddescription"
-            android:value="格窗工作台 强制 LICENSE_UNLOCKED / 解锁全部功能" />
-        <!-- LSPosed 作用域：App 进程 + SystemUI 宿主进程 -->
+            android:value="格窗工作台 强制 LICENSE_UNLOCKED + 自动注入永久试用令牌" />
+        <!-- LSPosed 作用域：App 进程 + SystemUI 宿主进程（旧 Xposed 兼容） -->
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposedscope" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="格窗解锁模块">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
     </application>
 </manifest>
