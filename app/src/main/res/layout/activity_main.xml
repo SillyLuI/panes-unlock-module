@@ -1,49 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/bg_page"
+    android:orientation="vertical">
 
-    <LinearLayout
-        android:orientation="vertical"
-        android:padding="24dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@drawable/bg_gradient">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/title"
-            android:textColor="@color/text_primary"
-            android:textSize="22sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/subtitle"
-            android:textColor="#D8D8F0"
-            android:textSize="13sp" />
-    </LinearLayout>
-
-    <ListView
-        android:id="@+id/list"
+    <FrameLayout
+        android:id="@+id/page_container"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:divider="@android:color/transparent"
-        android:dividerHeight="10dp"
-        android:padding="12dp"
-        android:scrollbars="none" />
+        android:layout_weight="1" />
 
-    <TextView
+    <LinearLayout
+        android:id="@+id/bottom_nav"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="16dp"
-        android:text="@string/footer"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp" />
+        android:layout_height="60dp"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/bg_nav_bar"
+        android:elevation="6dp"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
 
+        <LinearLayout
+            android:id="@+id/nav_home"
+            style="@style/NavItem"
+            android:background="@drawable/bg_pill">
+            <ImageView style="@style/NavIcon" android:src="@drawable/ic_home" />
+            <TextView style="@style/NavText" android:text="@string/nav_home" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/nav_apps"
+            style="@style/NavItem">
+            <ImageView style="@style/NavIcon" android:src="@drawable/ic_apps" />
+            <TextView style="@style/NavText" android:text="@string/nav_apps" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/nav_ext"
+            style="@style/NavItem">
+            <ImageView style="@style/NavIcon" android:src="@drawable/ic_ext" />
+            <TextView style="@style/NavText" android:text="@string/nav_ext" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/nav_settings"
+            style="@style/NavItem">
+            <ImageView style="@style/NavIcon" android:src="@drawable/ic_settings" />
+            <TextView style="@style/NavText" android:text="@string/nav_settings" />
+        </LinearLayout>
+    </LinearLayout>
 </LinearLayout>
