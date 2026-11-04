@@ -1,48 +1,89 @@
 package com.example.panesunlock;
 
 import android.app.Activity;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.os.Bundle;
-import android.widget.Button;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.ListView;
 import android.widget.TextView;
-import android.widget.Toast;
+
+import java.io.InputStream;
+import java.util.List;
+import java.util.Scanner;
 
 public class MainActivity extends Activity {
+
+    private List<HookConf.AppEntry> apps;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        TextView tvInfo = findViewById(R.id.tvInfo);
-        TextView tvToken = findViewById(R.id.tvToken);
-        Button btnCopy = findViewById(R.id.btnCopy);
+        apps = loadApps();
+        ListView list = findViewById(R.id.list);
+        list.setAdapter(new BaseAdapter() {
+            @Override
+            public int getCount() {
+                return apps.size();
+            }
 
-        String token = TrialToken.generate();
+            @Override
+            public Object getItem(int i) {
+                return apps.get(i);
+            }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("格窗解锁模块（LSPosed）\n\n");
-        sb.append("本模块做两件事：\n");
-        sb.append("① 在运行时强制格窗工作台的 LICENSE_UNLOCKED / LICENSE_TRIAL 为已解锁\n");
-        sb.append("   （覆盖 App 与 SystemUI 宿主进程，客户端无功能级闸门，强制即全开）；\n");
-        sb.append("② 自动生成并注入合法的“永久试用令牌”（HMAC 校验可通过，不绑机器码）。\n\n");
-        sb.append("使用方法：\n");
-        sb.append("1. 在 LSPosed 中启用本模块；\n");
-        sb.append("2. 作用域勾选：io.github.yishisanren.panes 与 com.android.systemui；\n");
-        sb.append("3. 软重启后打开格窗，设置页“解锁”卡片显示已解锁。\n\n");
-        sb.append("说明：你提供的机器码仅用于付费码（ECDSA 私钥签名，无法伪造），\n");
-        sb.append("本模块走的是强制 + 试用令牌路线，不需要也不依赖机器码。");
-        tvInfo.setText(sb.toString());
-        tvToken.setText(token);
+            @Override
+            public long getItemId(int i) {
+                return i;
+            }
 
-        btnCopy.setOnClickListener(v -> {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cm != null) {
-                cm.setPrimaryClip(ClipData.newPlainText("trial_token", token));
-                Toast.makeText(this, "已复制试用令牌", Toast.LENGTH_SHORT).show();
+            @Override
+            public View getView(int i, View v, ViewGroup p) {
+                if (v == null) {
+                    v = LayoutInflater.from(MainActivity.this)
+                            .inflate(R.layout.item_app, p, false);
+                }
+                HookConf.AppEntry e = apps.get(i);
+                ((TextView) v.findViewById(R.id.name)).setText(e.name);
+                ((TextView) v.findViewById(R.id.pkg)).setText(e.pkg);
+
+                TextView note = v.findViewById(R.id.note);
+                if (e.note != null && !e.note.isEmpty()) {
+                    note.setVisibility(View.VISIBLE);
+                    note.setText(e.note);
+                } else {
+                    note.setVisibility(View.GONE);
+                }
+
+                TextView status = v.findViewById(R.id.status);
+                boolean supported = !e.rules.isEmpty()
+                        || "io.github.yishisanren.panes".equals(e.pkg);
+                if (supported) {
+                    status.setText("已支持");
+                    status.setTextColor(0xFF37D67A);
+                    status.setBackgroundResource(R.drawable.bg_chip_ok);
+                } else {
+                    status.setText("待补 hook");
+                    status.setTextColor(0xFFFFB020);
+                    status.setBackgroundResource(R.drawable.bg_chip_warn);
+                }
+                return v;
             }
         });
+    }
+
+    private List<HookConf.AppEntry> loadApps() {
+        String json = null;
+        try {
+            InputStream is = getAssets().open("hooks.json");
+            json = new Scanner(is, "UTF-8").useDelimiter("\\A").next();
+        } catch (Throwable t) {
+            // 资源不可用时回退到内置默认配置
+        }
+        if (json == null) json = HookConf.DEFAULT_JSON;
+        return HookConf.parse(json);
     }
 }
