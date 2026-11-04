@@ -45,6 +45,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static XSharedPreferences XPREFS;
     private static String LOADED_USER_JSON;
     private static Map<String, List<UserHookStore.HookEntry>> USER_RULES;
+    private static Map<String, UserHookStore.AppEntry> USER_APPS;
 
     static {
         String json = readAssets();
@@ -83,8 +84,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
 
         // 用户自定义 hook（拓展页配置，SimpleHook 式）
         List<UserHookStore.HookEntry> userRules = userRulesFor(pkg);
-        if (userRules != null && !userRules.isEmpty()) {
-            XposedBridge.log("[PanesUnlock] " + pkg + " 已注入，应用 " + userRules.size() + " 条拓展 hook");
+        UserHookStore.AppEntry appSettings = USER_APPS == null ? null : USER_APPS.get(pkg);
+        if (appSettings == null && (userRules == null || userRules.isEmpty())) return;
+
+        XposedBridge.log("[PanesUnlock] " + pkg + " 已注入，应用 "
+                + (userRules == null ? 0 : userRules.size()) + " 条拓展 hook");
+        if (appSettings != null) applyAppToggles(appSettings, lpparam);
+        if (userRules != null) {
             for (UserHookStore.HookEntry h : userRules) {
                 applyUserRule(h, lpparam);
             }
@@ -125,8 +131,10 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             if (json == null || json.trim().isEmpty()) return null;
             if (USER_RULES == null || !json.equals(LOADED_USER_JSON)) {
                 LOADED_USER_JSON = json;
-                USER_RULES = UserHookStore.toMap(UserHookStore.parseConfig(json));
-                XposedBridge.log("[PanesUnlock] 配置已加载，共 " + USER_RULES.size() + " 个目标应用");
+                List<UserHookStore.AppEntry> apps = UserHookStore.parseConfig(json);
+                USER_RULES = UserHookStore.toMap(apps);
+                USER_APPS = UserHookStore.toAppMap(apps);
+                XposedBridge.log("[PanesUnlock] 配置已加载，共 " + USER_APPS.size() + " 个启用应用");
             }
             List<UserHookStore.HookEntry> rules = USER_RULES.get(pkg);
             if (rules == null) {
@@ -155,12 +163,56 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
 
     private void applyUserRule(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
         if (h == null || h.className == null || h.className.isEmpty()) return;
+        if (h.useAttach) {
+            hookWhenAttached(h, lp);
+            return;
+        }
         try {
             Class<?> clazz = XposedHelpers.findClass(h.className, lp.classLoader);
             applyUserRuleToClass(clazz, h, lp);
         } catch (Throwable t) {
             XposedBridge.log("[PanesUnlock] 类暂不可用，等待加载: " + h.className);
             hookWhenClassLoaded(h, lp);
+        }
+    }
+
+    /** ClassLoader 开关：等 Application.attach(BackContext) 后用其 ClassLoader 挂 Hook */
+    private static final List<PendingRule> ATTACH_RULES = new ArrayList<>();
+    private static boolean attachHooked = false;
+
+    private void hookWhenAttached(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
+        synchronized (ATTACH_RULES) {
+            ATTACH_RULES.add(new PendingRule(h, lp));
+            if (attachHooked) return;
+            attachHooked = true;
+        }
+        try {
+            XposedBridge.hookAllMethods(
+                    XposedHelpers.findClass("android.app.Application", lp.classLoader),
+                    "onCreate", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam p) {
+                            if (!(p.thisObject instanceof Context)) return;
+                            ClassLoader cl = ((Context) p.thisObject).getClassLoader();
+                            List<PendingRule> todo;
+                            synchronized (ATTACH_RULES) {
+                                todo = new ArrayList<>(ATTACH_RULES);
+                                ATTACH_RULES.clear();
+                            }
+                            for (PendingRule pr : todo) {
+                                try {
+                                    Class<?> clazz = XposedHelpers.findClass(pr.h.className, cl);
+                                    XposedBridge.log("[PanesUnlock] attach 后 ClassLoader 命中: "
+                                            + pr.h.className);
+                                    applyUserRuleToClass(clazz, pr.h, pr.lp);
+                                } catch (Throwable t) {
+                                    hookWhenClassLoaded(pr.h, pr.lp);
+                                }
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 注册 attach Hook 失败: " + t);
         }
     }
 
@@ -269,6 +321,146 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         }
     }
 
+    // ---------------- 应用级开关（「配置：xxx」页） ----------------
+
+    /** 应用级检测/网络开关，尽力而为，单项失败不影响其它项 */
+    private void applyAppToggles(final UserHookStore.AppEntry a,
+                                 XC_LoadPackage.LoadPackageParam lp) {
+        if (a.toast) toastInTarget(a.label);
+        if (a.blockAccessibility) {
+            hookSettingsInt("android.provider.Settings$Secure", lp,
+                    "accessibility_enabled", 0);
+            hookSettingsString("android.provider.Settings$Secure", lp,
+                    "enabled_accessibility_services", "");
+            try {
+                Class<?> am = XposedHelpers.findClass(
+                        "android.view.accessibility.AccessibilityManager", lp.classLoader);
+                XposedBridge.hookAllMethods(am, "getEnabledAccessibilityServiceList",
+                        new XC_MethodHook() {
+                            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                                p.setResult(new java.util.ArrayList<>());
+                            }
+                        });
+            } catch (Throwable ignored) {
+            }
+        }
+        if (a.blockDevOptions) {
+            hookSettingsInt("android.provider.Settings$Global", lp,
+                    "development_settings_enabled", 0);
+        }
+        if (a.blockUsbDebug) {
+            hookSettingsInt("android.provider.Settings$Global", lp, "adb_enabled", 0);
+        }
+        if (a.blockVm || a.blockEnv) {
+            hookSettingsInt("android.provider.Settings$Global", lp, "adb_enabled", 0);
+            try {
+                XposedHelpers.findAndHookMethod("android.os.SystemProperties", lp.classLoader,
+                        "get", String.class, new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                Object k = p.args.length > 0 ? p.args[0] : null;
+                                if (k instanceof String && suspicious((String) k)) p.setResult("");
+                            }
+                        });
+            } catch (Throwable ignored) {
+            }
+            // 仅对明确的 Root / Xposed 特征路径返回 false，避免误伤普通文件路径
+            try {
+                XposedHelpers.findAndHookMethod("java.io.File", lp.classLoader, "exists",
+                        new XC_MethodHook() {
+                            @Override protected void afterHookedMethod(MethodHookParam p) {
+                                try {
+                                    String path = ((java.io.File) p.thisObject)
+                                            .getAbsolutePath().toLowerCase();
+                                    for (String marker : ROOT_MARKERS) {
+                                        if (path.contains(marker)) {
+                                            p.setResult(false);
+                                            return;
+                                        }
+                                    }
+                                } catch (Throwable ignored) {
+                                }
+                            }
+                        });
+            } catch (Throwable ignored) {
+            }
+        }
+        if (a.hideVpn && !a.hideProxy) {
+            try {
+                Class<?> nc = XposedHelpers.findClass(
+                        "android.net.NetworkCapabilities", lp.classLoader);
+                XposedBridge.hookAllMethods(nc, "hasTransport", new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        // NetworkCapabilities.TRANSPORT_VPN = 4
+                        if (p.args.length > 0 && p.args[0] instanceof Integer
+                                && (Integer) p.args[0] == 4) {
+                            p.setResult(false);
+                        }
+                    }
+                });
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static final String[] ROOT_MARKERS = {
+            "/system/bin/su", "/system/xbin/su", "/sbin/su", "/su/bin/su",
+            "/magisk/", "magiskhide", "/data/adb/magisk",
+            "xposedbridge", "lsposed", "riru", "zygisk"
+    };
+
+    private static boolean suspicious(String key) {
+        String k = key.toLowerCase();
+        return k.contains("xposed") || k.contains("magisk") || k.contains("riru")
+                || k.contains("debug") || k.contains("emulator") || k.contains("goldfish");
+    }
+
+    private void hookSettingsInt(String cls, XC_LoadPackage.LoadPackageParam lp,
+                                 final String key, final int value) {
+        try {
+            Class<?> c = XposedHelpers.findClass(cls, lp.classLoader);
+            XposedBridge.hookAllMethods(c, "getInt", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.args.length > 1 && p.args[1] instanceof String
+                            && key.equals(p.args[1])) {
+                        p.setResult(value);
+                    }
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void hookSettingsString(String cls, XC_LoadPackage.LoadPackageParam lp,
+                                    final String key, final String value) {
+        try {
+            Class<?> c = XposedHelpers.findClass(cls, lp.classLoader);
+            XposedBridge.hookAllMethods(c, "getString", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (p.args.length > 1 && p.args[1] instanceof String
+                            && key.equals(p.args[1])) {
+                        p.setResult(value);
+                    }
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void toastInTarget(final String label) {
+        try {
+            final Context ctx = currentApplication();
+            if (ctx == null) return;
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                try {
+                    android.widget.Toast.makeText(ctx, "Panes Unlock 已生效：" + label,
+                            android.widget.Toast.LENGTH_SHORT).show();
+                } catch (Throwable ignored) {
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
     private XC_MethodHook makeUserHook(final UserHookStore.HookEntry h, final String pkg) {
         return new XC_MethodHook() {
             private String tag() {
@@ -276,12 +468,26 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                         + (h.methodName == null || h.methodName.isEmpty() ? "*" : h.methodName);
             }
 
+            private Class<?> returnType(MethodHookParam p) {
+                if (h.returnType != null && !h.returnType.trim().isEmpty()) {
+                    String t = h.returnType.trim();
+                    Class<?> c = primitiveFor(t);
+                    if (c != null) return c;
+                    try {
+                        return XposedHelpers.findClass(t,
+                                ((Member) p.method).getDeclaringClass().getClassLoader());
+                    } catch (Throwable ignored) {
+                    }
+                }
+                return (p.method instanceof Method)
+                        ? ((Method) p.method).getReturnType()
+                        : (p.method instanceof Constructor ? void.class : Object.class);
+            }
+
             @Override
             protected void beforeHookedMethod(MethodHookParam p) {
                 try {
-                    Class<?> rt = (p.method instanceof Method)
-                            ? ((Method) p.method).getReturnType()
-                            : (p.method instanceof Constructor ? void.class : Object.class);
+                    Class<?> rt = returnType(p);
                     String m = h.mode;
                     if (UserHookStore.MODE_RETURN.equals(m)) {
                         p.setResult(UserHookStore.coerce(UserHookStore.parseValue(h.value), rt));
@@ -320,9 +526,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 try {
                     String m = h.mode;
                     if (UserHookStore.MODE_RETURN_AFTER.equals(m)) {
-                        Class<?> rt = (p.method instanceof Method)
-                                ? ((Method) p.method).getReturnType() : Object.class;
-                        p.setResult(UserHookStore.coerce(UserHookStore.parseValue(h.value), rt));
+                        p.setResult(UserHookStore.coerce(UserHookStore.parseValue(h.value),
+                                returnType(p)));
                     } else if (UserHookStore.MODE_INSTANCE.equals(m)) {
                         if (p.thisObject != null && h.fieldName != null && !h.fieldName.isEmpty()) {
                             Field f = XposedHelpers.findField(p.thisObject.getClass(), h.fieldName);
