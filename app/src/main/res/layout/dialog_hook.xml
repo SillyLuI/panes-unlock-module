@@ -61,7 +61,7 @@
         <EditText android:id="@+id/dh_method" style="@style/FieldInput"
             android:inputType="text"
             android:maxLines="1"
-            android:hint="例如：isVip（<init>=构造，*=全部）" />
+            android:hint="例如：isVip（&lt;init&gt;=构造，*=全部）" />
 
         <TextView style="@style/FieldLabel" android:text="输入参数类型" />
         <EditText android:id="@+id/dh_params" style="@style/FieldInput"
