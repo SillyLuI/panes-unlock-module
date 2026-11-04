@@ -6,11 +6,17 @@ import android.provider.Settings;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.XSharedPreferences;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 import java.io.InputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 
 /**
@@ -35,6 +41,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static final long TRIAL_FOREVER = 4102444800000L; // 2100-01-01
 
     private static List<HookConf.AppEntry> CONFIG;
+    private static XSharedPreferences XPREFS;
+    private static String LOADED_USER_JSON;
+    private static Map<String, List<UserHookStore.HookEntry>> USER_RULES;
 
     static {
         String json = readAssets();
@@ -56,17 +65,194 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
         }
 
-        // 通用应用规则
+        // 通用应用规则（可在模块 App 里按包名开关）
         for (HookConf.AppEntry app : CONFIG) {
             if (app.pkg.equals(pkg)) {
                 if (PANES.equals(pkg)) injectTrialToken();
-                for (HookConf.Rule r : app.rules) {
-                    if (!"bundle_forge".equals(r.type)) {
-                        applyRule(r, lpparam);
+                if (builtinEnabled(pkg)) {
+                    for (HookConf.Rule r : app.rules) {
+                        if (!"bundle_forge".equals(r.type)) {
+                            applyRule(r, lpparam);
+                        }
                     }
                 }
                 break;
             }
+        }
+
+        // 用户自定义 hook（拓展页配置，SimpleHook 式）
+        List<UserHookStore.HookEntry> userRules = userRulesFor(pkg);
+        if (userRules != null) {
+            for (UserHookStore.HookEntry h : userRules) {
+                applyUserRule(h, lpparam);
+            }
+        }
+    }
+
+    // ---------------- 用户自定义 hook（拓展） ----------------
+
+    private static XSharedPreferences xPrefs() {
+        if (XPREFS == null) {
+            try {
+                XPREFS = new XSharedPreferences("com.example.panesunlock", UserHookStore.PREFS);
+                XPREFS.makeWorldReadable();
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+        try {
+            XPREFS.reload();
+        } catch (Throwable ignored) {
+        }
+        return XPREFS;
+    }
+
+    private static boolean builtinEnabled(String pkg) {
+        XSharedPreferences p = xPrefs();
+        return p == null || p.getBoolean("enabled_" + pkg, true);
+    }
+
+    private static List<UserHookStore.HookEntry> userRulesFor(String pkg) {
+        try {
+            XSharedPreferences p = xPrefs();
+            if (p == null) return null;
+            String json = p.getString(UserHookStore.KEY_CONFIG, null);
+            if (json == null || json.trim().isEmpty()) return null;
+            if (USER_RULES == null || !json.equals(LOADED_USER_JSON)) {
+                LOADED_USER_JSON = json;
+                USER_RULES = UserHookStore.toMap(UserHookStore.parseConfig(json));
+            }
+            return USER_RULES.get(pkg);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private void applyUserRule(UserHookStore.HookEntry h, XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            if (h == null || h.className == null || h.className.isEmpty()) return;
+            Class<?> clazz = XposedHelpers.findClass(h.className, lp.classLoader);
+
+            if (UserHookStore.MODE_STATIC.equals(h.mode)) {
+                applyStaticField(clazz, h);
+                return;
+            }
+
+            XC_MethodHook hook = makeUserHook(h);
+            Class<?>[] pts = parseParamTypes(h.paramTypes, lp.classLoader);
+            if (UserHookStore.MODE_PARAMS.equals(h.mode) && pts == null) {
+                return; // 参数替换必须能确定参数类型
+            }
+
+            if ("<init>".equals(h.methodName)) {
+                if (pts != null) {
+                    Object[] args = new Object[pts.length + 1];
+                    System.arraycopy(pts, 0, args, 0, pts.length);
+                    args[pts.length] = hook;
+                    XposedHelpers.findAndHookConstructor(clazz, args);
+                } else {
+                    XposedBridge.hookAllConstructors(clazz, hook);
+                }
+                return;
+            }
+
+            if ("*".equals(h.methodName)) {
+                for (Method m : clazz.getDeclaredMethods()) {
+                    XposedBridge.hookMethod(m, hook);
+                }
+                return;
+            }
+            if (pts == null) {
+                XposedBridge.hookAllMethods(clazz, h.methodName, hook);
+            } else {
+                Object[] args = new Object[pts.length + 1];
+                System.arraycopy(pts, 0, args, 0, pts.length);
+                args[pts.length] = hook;
+                XposedHelpers.findAndHookMethod(clazz, h.methodName, args);
+            }
+        } catch (Throwable ignored) {
+            // 类/方法不存在时静默跳过
+        }
+    }
+
+    private void applyStaticField(Class<?> clazz, UserHookStore.HookEntry h) {
+        try {
+            if (h.fieldName == null || h.fieldName.isEmpty()) return;
+            Field f = XposedHelpers.findField(clazz, h.fieldName);
+            f.setAccessible(true);
+            Object v = UserHookStore.coerce(UserHookStore.parseValue(h.value), f.getType());
+            f.set(null, v);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private XC_MethodHook makeUserHook(final UserHookStore.HookEntry h) {
+        return new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                try {
+                    Class<?> rt = (p.method instanceof Method)
+                            ? ((Method) p.method).getReturnType()
+                            : (p.method instanceof Constructor ? void.class : Object.class);
+                    if (UserHookStore.MODE_RETURN.equals(h.mode)) {
+                        p.setResult(UserHookStore.coerce(UserHookStore.parseValue(h.value), rt));
+                    } else if (UserHookStore.MODE_INTERCEPT.equals(h.mode)) {
+                        p.setResult(UserHookStore.defaultValueFor(rt));
+                    } else if (UserHookStore.MODE_PARAMS.equals(h.mode)) {
+                        String[] vals = h.value.split(",", -1);
+                        for (int i = 0; i < vals.length && i < p.args.length; i++) {
+                            String s = vals[i].trim();
+                            if (s.isEmpty()) continue;
+                            Object parsed = UserHookStore.parseValue(s);
+                            p.args[i] = (p.args[i] != null)
+                                    ? UserHookStore.coerce(parsed, p.args[i].getClass())
+                                    : parsed;
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        };
+    }
+
+    private static Class<?>[] parseParamTypes(String s, ClassLoader cl) {
+        if (s == null) return null;
+        String t = s.trim();
+        if (t.isEmpty() || "*".equals(t)) return null;
+        String[] parts = t.split(",");
+        List<Class<?>> out = new ArrayList<>();
+        for (String raw : parts) {
+            String n = raw.trim();
+            if (n.isEmpty()) continue;
+            Class<?> c = primitiveFor(n);
+            if (c == null) {
+                try {
+                    c = XposedHelpers.findClass(n, cl);
+                } catch (Throwable e) {
+                    return null; // 任一类型找不到则退化为全部重载
+                }
+            }
+            out.add(c);
+        }
+        return out.toArray(new Class<?>[0]);
+    }
+
+    private static Class<?> primitiveFor(String n) {
+        switch (n) {
+            case "int": return int.class;
+            case "long": return long.class;
+            case "boolean": return boolean.class;
+            case "float": return float.class;
+            case "double": return double.class;
+            case "short": return short.class;
+            case "byte": return byte.class;
+            case "char": return char.class;
+            case "void": return void.class;
+            case "byte[]": return byte[].class;
+            case "int[]": return int[].class;
+            case "long[]": return long[].class;
+            case "String": case "string": return String.class;
+            default: return null;
         }
     }
 
