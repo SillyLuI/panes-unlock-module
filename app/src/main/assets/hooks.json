@@ -17,8 +17,12 @@
     {
       "name": "Moviebase",
       "pkg": "com.moviebase",
-      "note": "提供的是 .apks 分包，需提取 base.apk 分析；包名待确认",
-      "rules": []
+      "note": "RevenueCat 订阅；强制 SessionState.hasPremiumEntitlement(Lbre 字段 b) + RevenueCat EntitlementInfo.isActive()/getWillRenew()",
+      "rules": [
+        { "type": "field_true", "cls": "bre", "field": "b" },
+        { "type": "return_true", "cls": "com.revenuecat.purchases.EntitlementInfo", "method": "isActive", "params": [] },
+        { "type": "return_true", "cls": "com.revenuecat.purchases.EntitlementInfo", "method": "getWillRenew", "params": [] }
+      ]
     }
   ]
 }
