@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_page">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="20dp">
+
+        <!-- 标题栏：返回 + 配置：xxx + 右上角 Hook 设置 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <ImageView
+                android:id="@+id/ac_back"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_back"
+                android:tint="@color/text_primary"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+            <TextView
+                android:id="@+id/ac_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:textColor="@color/text_primary"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+            <ImageView
+                android:id="@+id/ac_hooks"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_settings"
+                android:tint="@color/text_primary"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+        </LinearLayout>
+
+        <android.widget.ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="12dp"
+            android:overScrollMode="never"
+            android:clipToPadding="false"
+            android:paddingBottom="100dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView style="@style/SectionLabel" android:text="基础" />
+                <LinearLayout
+                    android:id="@+id/ac_group_basic"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_card2"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/SectionLabel" android:text="检测" />
+                <LinearLayout
+                    android:id="@+id/ac_group_detect"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_card2"
+                    android:orientation="vertical" />
+
+                <TextView style="@style/SectionLabel" android:text="网络" />
+                <LinearLayout
+                    android:id="@+id/ac_group_network"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_card2"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </android.widget.ScrollView>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/ac_save"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/bg_chip_btn"
+        android:drawableStart="@drawable/ic_save"
+        android:drawablePadding="8dp"
+        android:drawableTint="@color/text_primary"
+        android:elevation="6dp"
+        android:gravity="center"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:text="保存"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+</FrameLayout>
