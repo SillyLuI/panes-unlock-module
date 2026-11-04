@@ -1,13 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#0E0E14</color>
-    <color name="surface">#1A1A24</color>
-    <color name="surface_2">#23232F</color>
-    <color name="primary">#7C4DFF</color>
-    <color name="primary_dark">#3D5AFE</color>
-    <color name="accent">#FF4D9D</color>
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#9A9AB0</color>
-    <color name="success">#37D67A</color>
-    <color name="warn">#FFB020</color>
+    <!-- 奶油色主题（参考 Fuck for VIP 截图） -->
+    <color name="bg_page">#FBEDE3</color>
+    <color name="bg_card">#FDF6EE</color>
+    <color name="bg_card_stroke">#F3E0D0</color>
+    <color name="accent">#A9603E</color>
+    <color name="accent_deep">#8F4E30</color>
+    <color name="text_primary">#3F2D23</color>
+    <color name="text_secondary">#9C887A</color>
+    <color name="nav_pill">#F6DCCB</color>
+    <color name="fab_bg">#F5CBB1</color>
+    <color name="avatar_bg">#F6DFCE</color>
+    <color name="search_bg">#F6E4D6</color>
+    <color name="ok_green">#5B9E63</color>
+    <color name="warn_orange">#C77B3E</color>
+    <color name="ribbon">#8F4E30</color>
+
+    <!-- 旧键保留（兼容旧 drawable 引用） -->
+    <color name="bg_gradient_start">#FBEDE3</color>
+    <color name="bg_gradient_end">#F6DCCB</color>
+    <color name="chip_ok_bg">#E4EFE2</color>
+    <color name="chip_ok_text">#4E7C55</color>
+    <color name="chip_warn_bg">#F7E6D4</color>
+    <color name="chip_warn_text">#B4763B</color>
 </resources>
