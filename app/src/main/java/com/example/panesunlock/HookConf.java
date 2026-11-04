@@ -34,8 +34,12 @@ public final class HookConf {
             "    {\n" +
             "      \"name\": \"Moviebase\",\n" +
             "      \"pkg\": \"com.moviebase\",\n" +
-            "      \"note\": \".apks 分包，需提取 base.apk 分析；包名待确认\",\n" +
-            "      \"rules\": []\n" +
+            "      \"note\": \"RevenueCat 订阅；强制 SessionState.hasPremiumEntitlement(Lbre 字段 b) + RevenueCat EntitlementInfo.isActive()/getWillRenew()\",\n" +
+            "      \"rules\": [\n" +
+            "        { \"type\": \"field_true\", \"cls\": \"bre\", \"field\": \"b\" },\n" +
+            "        { \"type\": \"return_true\", \"cls\": \"com.revenuecat.purchases.EntitlementInfo\", \"method\": \"isActive\", \"params\": [] },\n" +
+            "        { \"type\": \"return_true\", \"cls\": \"com.revenuecat.purchases.EntitlementInfo\", \"method\": \"getWillRenew\", \"params\": [] }\n" +
+            "      ]\n" +
             "    }\n" +
             "  ]\n" +
             "}";
@@ -45,6 +49,7 @@ public final class HookConf {
         public String cls;
         public String method;
         public String value;
+        public String field;
         public List<String> params = new ArrayList<>();
     }
 
