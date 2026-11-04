@@ -53,6 +53,11 @@ public class UserHookStore {
         public String value = "";
         public String fieldName = "";
         public String memo = "";
+        /** 返回类型（可选，用于精确转换返回值） */
+        public String returnType = "";
+        /** 使用 Application.attach 后的 ClassLoader 挂 Hook（加固/多 dex 应用） */
+        public boolean useAttach = false;
+        public boolean enabled = true;
     }
 
     public static class AppEntry {
@@ -60,6 +65,16 @@ public class UserHookStore {
         public String label = "";
         public boolean enabled = true;
         public List<HookEntry> hooks = new ArrayList<>();
+        public String versionName = "";
+        // 应用级开关（对应「配置：xxx」页）
+        public boolean toast = false;
+        public boolean blockAccessibility = false;
+        public boolean blockDevOptions = false;
+        public boolean blockUsbDebug = false;
+        public boolean blockVm = false;
+        public boolean blockEnv = false;
+        public boolean hideVpn = false;
+        public boolean hideProxy = false;
     }
 
     // ---------------- 模块应用侧 ----------------
@@ -100,6 +115,15 @@ public class UserHookStore {
                     o.put("pkg", a.pkg);
                     o.put("label", a.label);
                     o.put("enabled", a.enabled);
+                    o.put("versionName", a.versionName);
+                    o.put("toast", a.toast);
+                    o.put("blockAccessibility", a.blockAccessibility);
+                    o.put("blockDevOptions", a.blockDevOptions);
+                    o.put("blockUsbDebug", a.blockUsbDebug);
+                    o.put("blockVm", a.blockVm);
+                    o.put("blockEnv", a.blockEnv);
+                    o.put("hideVpn", a.hideVpn);
+                    o.put("hideProxy", a.hideProxy);
                     JSONArray hs = new JSONArray();
                     for (HookEntry h : a.hooks) {
                         JSONObject ho = new JSONObject();
@@ -110,6 +134,9 @@ public class UserHookStore {
                         ho.put("value", h.value);
                         ho.put("fieldName", h.fieldName);
                         ho.put("memo", h.memo);
+                        ho.put("returnType", h.returnType);
+                        ho.put("useAttach", h.useAttach);
+                        ho.put("enabled", h.enabled);
                         hs.put(ho);
                     }
                     o.put("hooks", hs);
@@ -195,7 +222,17 @@ public class UserHookStore {
         a.pkg = firstNonEmpty(o, "pkg", "packageName", "package", "appPackage");
         a.label = firstNonEmpty(o, "label", "name", "appName", "appName");
         if (a.label.isEmpty()) a.label = a.pkg;
-        a.enabled = true; // 导入的配置默认启用（启用开关在模块侧单独管理）
+        // 本模块格式带 enabled 字段，按实值恢复；外部导入格式无该字段，默认启用
+        a.enabled = o.has("enabled") ? o.optBoolean("enabled", true) : true;
+        a.versionName = firstNonEmpty(o, "versionName", "version", "appVersion");
+        a.toast = o.optBoolean("toast", false);
+        a.blockAccessibility = o.optBoolean("blockAccessibility", false);
+        a.blockDevOptions = o.optBoolean("blockDevOptions", false);
+        a.blockUsbDebug = o.optBoolean("blockUsbDebug", false);
+        a.blockVm = o.optBoolean("blockVm", false);
+        a.blockEnv = o.optBoolean("blockEnv", false);
+        a.hideVpn = o.optBoolean("hideVpn", false);
+        a.hideProxy = o.optBoolean("hideProxy", false);
         JSONArray hs = getHookArray(o);
         if (hs != null) {
             for (int i = 0; i < hs.length(); i++) {
@@ -260,6 +297,9 @@ public class UserHookStore {
         String field = firstNonEmpty(o, "fieldName", "staticField", "field", "staticFieldName");
         h.fieldName = field;
         h.memo = firstNonEmpty(o, "memo", "description", "desc", "note", "remark");
+        h.returnType = firstNonEmpty(o, "returnType", "methodReturn", "resultType");
+        h.useAttach = o.optBoolean("useAttach", false) || o.optBoolean("classLoader", false);
+        h.enabled = o.optBoolean("enabled", true);
 
         // 模式判定：优先用显式 type/mode，否则按字段存在性推断
         String hookType = firstNonEmpty(o, "mode", "hookMode", "type", "hookType");
@@ -458,7 +498,23 @@ public class UserHookStore {
         Map<String, List<HookEntry>> m = new HashMap<>();
         if (apps != null) {
             for (AppEntry a : apps) {
-                if (a.enabled && a.pkg != null) m.put(a.pkg, a.hooks);
+                if (!a.enabled || a.pkg == null) continue;
+                List<HookEntry> active = new ArrayList<>();
+                for (HookEntry h : a.hooks) {
+                    if (h != null && h.enabled) active.add(h);
+                }
+                m.put(a.pkg, active);
+            }
+        }
+        return m;
+    }
+
+    /** 按包名取应用级设置（供 Xposed 侧使用，仅已启用的应用） */
+    public static Map<String, AppEntry> toAppMap(List<AppEntry> apps) {
+        Map<String, AppEntry> m = new HashMap<>();
+        if (apps != null) {
+            for (AppEntry a : apps) {
+                if (a.enabled && a.pkg != null) m.put(a.pkg, a);
             }
         }
         return m;
