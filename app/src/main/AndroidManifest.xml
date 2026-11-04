@@ -4,7 +4,8 @@
     <application
         android:allowBackup="true"
         android:hasCode="true"
-        android:label="格窗解锁模块">
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme">
 
         <meta-data
             android:name="xposedmodule"
@@ -14,8 +15,8 @@
             android:value="93" />
         <meta-data
             android:name="xposeddescription"
-            android:value="格窗工作台 强制 LICENSE_UNLOCKED + 自动注入永久试用令牌" />
-        <!-- LSPosed 作用域：App 进程 + SystemUI 宿主进程（旧 Xposed 兼容） -->
+            android:value="多应用解锁模块：格窗强制 LICENSE + 试用令牌；支持配置式 hook 扩展" />
+        <!-- LSPosed 作用域：按需勾选目标应用及其宿主（旧 Xposed 兼容） -->
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposedscope" />
@@ -23,7 +24,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="格窗解锁模块">
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
