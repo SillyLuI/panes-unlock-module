@@ -24,6 +24,8 @@ android {
 }
 
 dependencies {
-    // 仅编译期依赖，不会打进 APK（LSPosed 运行环境已提供）
+    // 仅编译期依赖，不打进 APK（LSPosed 运行环境已提供）
     compileOnly 'de.robv.android.xposed:api:82'
+    // 界面使用 AppCompat 主题（更小、构建稳定）
+    implementation 'androidx.appcompat:appcompat:1.6.1'
 }
