@@ -1,0 +1,24 @@
+{
+  "apps": [
+    {
+      "name": "格窗工作台",
+      "pkg": "io.github.yishisanren.panes",
+      "note": "通过强制 LICENSE_UNLOCKED / TRIAL（覆盖 App 与 SystemUI 宿主）+ 注入试用令牌解锁",
+      "rules": [
+        { "type": "bundle_forge" }
+      ]
+    },
+    {
+      "name": "次元库",
+      "pkg": "com.parse.qimiao",
+      "note": "梆梆加固，静态无法定位 VIP 方法；请真机动态定位后在此填写 rules",
+      "rules": []
+    },
+    {
+      "name": "Moviebase",
+      "pkg": "com.moviebase",
+      "note": "提供的是 .apks 分包，需提取 base.apk 分析；包名待确认",
+      "rules": []
+    }
+  ]
+}
