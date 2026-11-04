@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_page">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="20dp">
+
+        <!-- 标题栏 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <ImageView
+                android:id="@+id/ha_back"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_back"
+                android:tint="@color/text_primary"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+            <TextView
+                android:id="@+id/ha_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="新增配置"
+                android:textColor="@color/text_primary"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+            <ImageView
+                android:id="@+id/ha_save"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_save"
+                android:tint="@color/accent_deep"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+        </LinearLayout>
+
+        <android.widget.ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="18dp"
+            android:overScrollMode="never"
+            android:clipToPadding="false"
+            android:paddingBottom="40dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- ClassLoader -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_card2"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="16dp">
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView style="@style/SwitchText" android:text="ClassLoader" />
+                        <TextView style="@style/SwitchSub"
+                            android:text="使用 attach 后的上下文获取 ClassLoader 来 Hook 方法" />
+                    </LinearLayout>
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/ha_attach"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp" />
+                </LinearLayout>
+
+                <!-- Hook 模式 -->
+                <TextView style="@style/FieldLabel" android:text="Hook 模式" />
+                <TextView
+                    android:id="@+id/ha_mode"
+                    style="@style/OutlineBox"
+                    android:drawableEnd="@drawable/ic_dropdown"
+                    android:text="返回值" />
+
+                <!-- Hook 时机 -->
+                <TextView style="@style/FieldLabel" android:text="Hook 时机" />
+                <TextView
+                    android:id="@+id/ha_point"
+                    style="@style/OutlineBox"
+                    android:drawableEnd="@drawable/ic_dropdown"
+                    android:text="方法执行前" />
+
+                <EditText
+                    android:id="@+id/ha_class"
+                    style="@style/OutlineInput"
+                    android:layout_marginTop="16dp"
+                    android:hint="类名"
+                    android:inputType="text" />
+                <TextView style="@style/CardSub" android:text="例如：com.example.MyClass" />
+
+                <EditText
+                    android:id="@+id/ha_method"
+                    style="@style/OutlineInput"
+                    android:layout_marginTop="14dp"
+                    android:hint="方法名"
+                    android:inputType="text" />
+                <TextView style="@style/CardSub" android:text="例如：getUserName，构造函数用 &lt;init&gt;" />
+
+                <!-- 参数类型 -->
+                <TextView style="@style/FieldLabel" android:text="参数类型" />
+                <TextView
+                    android:id="@+id/ha_params"
+                    style="@style/OutlineBox"
+                    android:drawableEnd="@drawable/ic_dropdown"
+                    android:textColor="@color/text_secondary"
+                    android:text="int,boolean,java.lang.String" />
+                <TextView style="@style/CardSub" android:text="留空表示 Hook 同名全部重载；可自行输入逗号分隔类型" />
+
+                <!-- 返回值 -->
+                <EditText
+                    android:id="@+id/ha_value"
+                    style="@style/OutlineInput"
+                    android:layout_marginTop="16dp"
+                    android:drawableEnd="@drawable/ic_info"
+                    android:hint="返回值"
+                    android:inputType="text" />
+                <TextView style="@style/CardSub" android:text="例如：true 或 这里是返回值" />
+
+                <!-- 返回类型 -->
+                <TextView style="@style/FieldLabel" android:text="返回类型" />
+                <TextView
+                    android:id="@+id/ha_return_type"
+                    style="@style/OutlineBox"
+                    android:drawableEnd="@drawable/ic_dropdown"
+                    android:textColor="@color/text_secondary"
+                    android:text="boolean" />
+                <TextView style="@style/CardSub" android:text="例如：boolean 或 java.lang.String" />
+
+                <EditText
+                    android:id="@+id/ha_field"
+                    style="@style/OutlineInput"
+                    android:layout_marginTop="14dp"
+                    android:hint="字段名 / 变量名"
+                    android:visibility="gone"
+                    android:inputType="text" />
+
+                <EditText
+                    android:id="@+id/ha_memo"
+                    style="@style/OutlineInput"
+                    android:layout_marginTop="16dp"
+                    android:hint="备注 / Hook 说明"
+                    android:inputType="text" />
+                <TextView style="@style/CardSub" android:text="描述说明，可填可不填" />
+
+                <TextView
+                    android:id="@+id/ha_smali"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_field_box"
+                    android:drawableStart="@drawable/ic_clipboard"
+                    android:drawablePadding="8dp"
+                    android:gravity="center_vertical"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:text="从剪贴板 smali 填充类名 / 方法 / 参数"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </android.widget.ScrollView>
+    </LinearLayout>
+</FrameLayout>
