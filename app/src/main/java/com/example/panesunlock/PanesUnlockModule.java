@@ -3,7 +3,6 @@ package com.example.panesunlock;
 import android.content.Context;
 import android.provider.Settings;
 
-import de.robv.android.xposed.AndroidAppHelper;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
@@ -42,13 +41,23 @@ public class PanesUnlockModule implements IXposedHookLoadPackage {
         // 2) 仅在目标 App 进程内：注入合法永久试用令牌（best-effort）
         if (TARGET.equals(lpparam.packageName)) {
             try {
-                Context ctx = AndroidAppHelper.currentApplication();
+                Context ctx = currentApplication();
                 if (ctx != null) {
                     String token = TrialToken.generate();
                     Settings.Global.putString(ctx.getContentResolver(), "panes_trial_v1", token);
                     Settings.Secure.putString(ctx.getContentResolver(), "sysui_tile_layout_rev", token);
                 }
             } catch (Throwable ignored) { /* 权限不足等情况下跳过，不影响主机制 */ }
+        }
+    }
+
+    /** 反射获取当前 Application（避免依赖 Xposed 实现包的 AndroidAppHelper）。 */
+    private static Context currentApplication() {
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            return (Context) at.getMethod("currentApplication").invoke(null);
+        } catch (Throwable t) {
+            return null;
         }
     }
 
