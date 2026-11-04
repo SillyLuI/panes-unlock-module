@@ -11,8 +11,25 @@ android {
         targetSdk 34
     }
 
+    signingConfigs {
+        // 固定签名密钥（提交进仓库），保证每次构建签名一致，覆盖安装无需卸载
+        fixed {
+            def ksFile = file("$projectDir/keystore.jks")
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword "panesunlock123"
+                keyAlias "panes"
+                keyPassword "panesunlock123"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.fixed
+        }
         release {
+            signingConfig signingConfigs.fixed
             minifyEnabled false
         }
     }
