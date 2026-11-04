@@ -9,40 +9,82 @@
         android:orientation="vertical"
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
-        android:paddingTop="16dp"
+        android:paddingTop="14dp"
         android:paddingBottom="8dp">
 
-        <TextView style="@style/FieldLabel" android:text="模式" />
-        <Spinner
-            android:id="@+id/dh_mode"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_search"
-            android:padding="8dp" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="选择模式："
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/dh_mode_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="4dp"
+                android:text="Hook 返回值"
+                android:textColor="@color/accent_deep"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+            <TextView
+                android:id="@+id/dh_smali"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_pill"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:text="粘贴 smali 转换"
+                android:textColor="@color/accent_deep"
+                android:textSize="13sp" />
+        </LinearLayout>
 
-        <TextView style="@style/FieldLabel" android:text="类名（如 com.xxx.a.b）" />
+        <TextView style="@style/FieldLabel" android:text="输入类名" />
         <EditText android:id="@+id/dh_class" style="@style/FieldInput"
             android:inputType="text"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:hint="例如：com.example.example" />
 
-        <TextView style="@style/FieldLabel" android:text="方法名（构造方法填 &lt;init&gt;；* 表示全部）" />
+        <TextView style="@style/FieldLabel" android:text="输入方法名" />
         <EditText android:id="@+id/dh_method" style="@style/FieldInput"
             android:inputType="text"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:hint="例如：isVip（<init>=构造，*=全部）" />
 
-        <TextView style="@style/FieldLabel" android:text="参数类型（逗号分隔，如 java.lang.String,int；留空或 * 表示全部重载）" />
+        <TextView style="@style/FieldLabel" android:text="输入参数类型" />
         <EditText android:id="@+id/dh_params" style="@style/FieldInput"
             android:inputType="text"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:hint="例如：boolean,int,java.lang.String（留空=全部重载）" />
 
-        <TextView style="@style/FieldLabel" android:text="修改值（true/false、42、3.14、42L、3.14f、10086s、null、empty）" />
+        <TextView style="@style/FieldLabel" android:text="输入修改值" />
         <EditText android:id="@+id/dh_value" style="@style/FieldInput"
             android:inputType="text"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:hint="例如：true / 0 / 42L / 3.14f / 10086s / null / empty" />
 
-        <TextView android:id="@+id/dh_field_label" style="@style/FieldLabel" android:text="静态字段名（静态变量模式）" />
+        <TextView android:id="@+id/dh_field_label" style="@style/FieldLabel" android:text="输入字段名（静态/实例变量模式）" />
         <EditText android:id="@+id/dh_field" style="@style/FieldInput"
             android:inputType="text"
-            android:maxLines="1" />
+            android:maxLines="1"
+            android:visibility="gone" />
+
+        <TextView style="@style/FieldLabel" android:text="输入备忘信息" />
+        <EditText android:id="@+id/dh_memo" style="@style/FieldInput"
+            android:inputType="text"
+            android:maxLines="1"
+            android:hint="例如：这是登录 Hook" />
     </LinearLayout>
 </ScrollView>
