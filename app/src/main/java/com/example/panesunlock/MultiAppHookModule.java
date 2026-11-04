@@ -5,6 +5,7 @@ import android.provider.Settings;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -132,8 +133,29 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
 
     /** 应用一条通用规则（simplehook 式）。 */
     private void applyRule(HookConf.Rule rule, XC_LoadPackage.LoadPackageParam lp) {
-        if (rule.cls == null || rule.cls.isEmpty()
-                || rule.method == null || rule.method.isEmpty()) {
+        if (rule.cls == null || rule.cls.isEmpty()) {
+            return;
+        }
+        // field_true：hook 该类的所有构造方法，构造后把指定布尔字段强制为 true
+        if ("field_true".equals(rule.type)) {
+            try {
+                Class<?> c = XposedHelpers.findClass(rule.cls, lp.classLoader);
+                XposedBridge.hookAllConstructors(c, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            XposedHelpers.setBooleanField(p.thisObject, rule.field, true);
+                        } catch (Throwable ignored) {
+                            // 字段不存在时跳过
+                        }
+                    }
+                });
+            } catch (Throwable ignored) {
+                // 类在当前版本不存在则跳过
+            }
+            return;
+        }
+        if (rule.method == null || rule.method.isEmpty()) {
             return;
         }
         Class<?>[] pts = paramTypesFrom(rule.params);
