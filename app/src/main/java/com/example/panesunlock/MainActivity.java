@@ -340,48 +340,6 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(new Intent(this, AppPickerActivity.class), REQ_PICK_EXT);
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_PICK_EXT && resultCode == RESULT_OK && data != null) {
-            ArrayList<String> pkgs = data.getStringArrayListExtra("pkgs");
-            ArrayList<String> labels = data.getStringArrayListExtra("labels");
-            if (pkgs == null || pkgs.isEmpty()) return;
-            String smali = pendingSmali;
-            pendingSmali = null;
-            int added = 0;
-            String firstPkg = null, firstLabel = null;
-            for (int i = 0; i < pkgs.size(); i++) {
-                String pkg = pkgs.get(i), label = labels.get(i);
-                boolean exists = false;
-                for (UserHookStore.AppEntry a : extApps) {
-                    if (a.pkg.equals(pkg)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists) {
-                    UserHookStore.AppEntry e = new UserHookStore.AppEntry();
-                    e.pkg = pkg;
-                    e.label = label;
-                    extApps.add(e);
-                    added++;
-                }
-                if (firstPkg == null) {
-                    firstPkg = pkg;
-                    firstLabel = label;
-                }
-            }
-            UserHookStore.save(this, extApps);
-            refreshExt();
-            if (added > 0) {
-                Toast.makeText(this, "已添加 " + added + " 个应用", Toast.LENGTH_SHORT).show();
-            }
-            // 带上 smali 预填进入第一个选中应用的配置页
-            openExtEditor(firstPkg, firstLabel);
-        }
-    }
-
     private void openExtEditor(String pkg, String label) {
         String smali = pendingSmali;
         pendingSmali = null;
@@ -658,6 +616,45 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_EXT) {
+            if (resultCode != RESULT_OK || data == null) return;
+            ArrayList<String> pkgs = data.getStringArrayListExtra("pkgs");
+            ArrayList<String> labels = data.getStringArrayListExtra("labels");
+            if (pkgs == null || pkgs.isEmpty()) return;
+            String smali = pendingSmali;
+            pendingSmali = null;
+            int added = 0;
+            String firstPkg = null, firstLabel = null;
+            for (int i = 0; i < pkgs.size(); i++) {
+                String pkg = pkgs.get(i), label = labels.get(i);
+                boolean exists = false;
+                for (UserHookStore.AppEntry a : extApps) {
+                    if (a.pkg.equals(pkg)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    UserHookStore.AppEntry e = new UserHookStore.AppEntry();
+                    e.pkg = pkg;
+                    e.label = label;
+                    extApps.add(e);
+                    added++;
+                }
+                if (firstPkg == null) {
+                    firstPkg = pkg;
+                    firstLabel = label;
+                }
+            }
+            UserHookStore.save(this, extApps);
+            refreshExt();
+            if (added > 0) {
+                Toast.makeText(this, "已添加 " + added + " 个应用", Toast.LENGTH_SHORT).show();
+            }
+            // 带上 smali 预填进入第一个选中应用的配置页
+            openExtEditor(firstPkg, firstLabel);
+            return;
+        }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         if (requestCode == REQ_IMPORT) {
