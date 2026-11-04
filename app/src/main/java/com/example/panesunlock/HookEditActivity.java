@@ -7,15 +7,12 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.GridLayout;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -23,29 +20,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 单个应用的拓展 hook 配置页（SimpleHook 式）：
- * 点 + → 选模式（11 种）→ 填类名/方法/参数/修改值/备忘（支持粘贴 smali 自动转换）。
+ * 「Hook 配置」页（图 4）：该应用的总开关、Hook 列表，以及导入 / 新建入口。
  */
 public class HookEditActivity extends AppCompatActivity {
 
     private static final String EXTRA_PKG = "pkg";
     private static final String EXTRA_LABEL = "label";
-    private static final String EXTRA_SMALI = "smali";
 
     private String pkg;
     private String label;
     private UserHookStore.AppEntry entry;
     private HooksAdapter adapter;
+    private SwitchCompat master;
 
     public static Intent intent(Context ctx, String pkg, String label) {
-        return intent(ctx, pkg, label, null);
-    }
-
-    public static Intent intent(Context ctx, String pkg, String label, String smali) {
         Intent i = new Intent(ctx, HookEditActivity.class);
         i.putExtra(EXTRA_PKG, pkg);
         i.putExtra(EXTRA_LABEL, label);
-        i.putExtra(EXTRA_SMALI, smali);
         return i;
     }
 
@@ -56,30 +47,36 @@ public class HookEditActivity extends AppCompatActivity {
 
         pkg = getIntent().getStringExtra(EXTRA_PKG);
         label = getIntent().getStringExtra(EXTRA_LABEL);
-        String smali = getIntent().getStringExtra(EXTRA_SMALI);
         if (pkg == null || pkg.isEmpty()) {
             finish();
             return;
         }
 
-        TextView title = findViewById(R.id.he_title);
-        TextView sub = findViewById(R.id.he_pkg);
-        TextView avatar = findViewById(R.id.he_avatar);
-        title.setText(label == null || label.isEmpty() ? pkg : label);
-        sub.setText(pkg);
-        avatar.setText(label == null || label.isEmpty() ? "?" : label.substring(0, 1));
+        findViewById(R.id.he_back).setOnClickListener(v -> finish());
+        ((TextView) findViewById(R.id.he_pkg)).setText("包名：" + pkg);
+        findViewById(R.id.he_more).setOnClickListener(v -> showMore());
+        findViewById(R.id.he_new).setOnClickListener(v ->
+                startActivity(HookAddActivity.intent(this, pkg)));
+        findViewById(R.id.he_import).setOnClickListener(v -> importFromClipboard());
+
+        master = findViewById(R.id.he_master);
+        master.setOnCheckedChangeListener((b, c) -> {
+            if (entry == null) return;
+            entry.enabled = c;
+            persist();
+            Toast.makeText(this, c ? "已启用，重启目标应用后生效" : "已停用", Toast.LENGTH_SHORT).show();
+        });
 
         adapter = new HooksAdapter();
         RecyclerView list = findViewById(R.id.he_list);
         list.setLayoutManager(new LinearLayoutManager(this));
         list.setAdapter(adapter);
+    }
 
-        findViewById(R.id.he_fab).setOnClickListener(v -> showModeChooser(-1));
+    @Override
+    protected void onResume() {
+        super.onResume();
         loadEntry();
-
-        if (smali != null && !smali.trim().isEmpty()) {
-            showModeChooser(-1, smali);
-        }
     }
 
     private void loadEntry() {
@@ -97,10 +94,14 @@ public class HookEditActivity extends AppCompatActivity {
             entry.label = label == null ? pkg : label;
             apps.add(entry);
             UserHookStore.save(this, apps);
-        } else if (label != null && !label.isEmpty() && !label.equals(entry.label)) {
-            entry.label = label;
-            UserHookStore.save(this, apps);
         }
+        master.setOnCheckedChangeListener(null);
+        master.setChecked(entry.enabled);
+        master.setOnCheckedChangeListener((b, c) -> {
+            entry.enabled = c;
+            persist();
+            Toast.makeText(this, c ? "已启用，重启目标应用后生效" : "已停用", Toast.LENGTH_SHORT).show();
+        });
         adapter.reload();
     }
 
@@ -121,142 +122,71 @@ public class HookEditActivity extends AppCompatActivity {
             exist.hooks = entry.hooks;
         }
         UserHookStore.save(this, apps);
-        adapter.reload();
     }
 
-    // ---------------- 模式选择弹窗 ----------------
-
-    private void showModeChooser(final int editIndex) {
-        showModeChooser(editIndex, null);
-    }
-
-    private void showModeChooser(final int editIndex, final String smali) {
-        View view = getLayoutInflater().inflate(R.layout.dialog_modes, null);
-        GridLayout grid = view.findViewById(R.id.modes_grid);
-        for (final String mode : UserHookStore.ALL_MODES) {
-            Button b = new Button(this, null, 0);
-            b.setText(UserHookStore.modeLabel(mode));
-            b.setBackgroundResource(R.drawable.bg_search);
-            b.setAllCaps(false);
-            b.setTextColor(0xFF3F2D23);
-            b.setPadding(dp(12), dp(14), dp(12), dp(14));
-            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
-            lp.width = 0;
-            lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-            lp.setMargins(dp(5), dp(5), dp(5), dp(5));
-            b.setLayoutParams(lp);
-            b.setOnClickListener(v -> {
-                modeChooserDlg.dismiss();
-                showHookDialog(editIndex, mode, smali);
-            });
-            grid.addView(b);
-        }
-        modeChooserDlg = new AlertDialog.Builder(this)
-                .setTitle("选择模式")
-                .setView(view)
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private AlertDialog modeChooserDlg;
-
-    // ---------------- 配置表单弹窗 ----------------
-
-    private void showHookDialog(final int editIndex, final String mode, final String smali) {
-        View view = getLayoutInflater().inflate(R.layout.dialog_hook, null);
-        final TextView modeText = view.findViewById(R.id.dh_mode_text);
-        final EditText etClass = view.findViewById(R.id.dh_class);
-        final EditText etMethod = view.findViewById(R.id.dh_method);
-        final EditText etParams = view.findViewById(R.id.dh_params);
-        final EditText etValue = view.findViewById(R.id.dh_value);
-        final EditText etField = view.findViewById(R.id.dh_field);
-        final TextView fieldLabel = view.findViewById(R.id.dh_field_label);
-        final EditText etMemo = view.findViewById(R.id.dh_memo);
-
-        modeText.setText(UserHookStore.modeLabel(mode));
-        modeText.setOnClickListener(v -> showModeChooser(editIndex, smali));
-        updateFieldVisibility(mode, etField, fieldLabel);
-
-        if (editIndex >= 0) {
-            UserHookStore.HookEntry h = entry.hooks.get(editIndex);
-            etClass.setText(h.className);
-            etMethod.setText(h.methodName);
-            etParams.setText(h.paramTypes);
-            etValue.setText(h.value);
-            etField.setText(h.fieldName);
-            etMemo.setText(h.memo);
-        } else if (smali != null && !smali.trim().isEmpty()) {
-            applySmali(smali, etClass, etMethod, etParams, etValue);
-        }
-
-        view.findViewById(R.id.dh_smali).setOnClickListener(v -> {
-            String text = clipboardText();
-            if (text == null || text.trim().isEmpty()) {
-                Toast.makeText(this, "剪贴板为空", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            if (!applySmali(text, etClass, etMethod, etParams, etValue)) {
-                Toast.makeText(this, "解析失败：未找到 .method 行", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, "已从 smali 填充", Toast.LENGTH_SHORT).show();
-            }
-        });
-
+    private void showMore() {
         new AlertDialog.Builder(this)
-                .setTitle(editIndex >= 0 ? "编辑配置" : "添加配置")
-                .setView(view)
-                .setPositiveButton("保存", (d, w) -> {
-                    UserHookStore.HookEntry h = new UserHookStore.HookEntry();
-                    h.mode = mode;
-                    h.className = textOf(etClass);
-                    h.methodName = textOf(etMethod);
-                    h.paramTypes = textOf(etParams);
-                    h.value = textOf(etValue);
-                    h.fieldName = textOf(etField);
-                    h.memo = textOf(etMemo);
-
-                    if (h.className.isEmpty()) {
-                        Toast.makeText(this, "类名不能为空", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    boolean logMode = UserHookStore.MODE_LOG_PARAMS.equals(h.mode)
-                            || UserHookStore.MODE_LOG_RETURN.equals(h.mode)
-                            || UserHookStore.MODE_LOG_BOTH.equals(h.mode)
-                            || UserHookStore.MODE_LOG_STATIC.equals(h.mode)
-                            || UserHookStore.MODE_LOG_INSTANCE.equals(h.mode);
-                    if (h.methodName.isEmpty() && !UserHookStore.MODE_STATIC.equals(h.mode) && !logMode) {
-                        Toast.makeText(this, "方法名不能为空", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    if ((UserHookStore.MODE_STATIC.equals(h.mode) || UserHookStore.MODE_INSTANCE.equals(h.mode))
-                            && h.fieldName.isEmpty()) {
-                        Toast.makeText(this, "该模式需要填写字段名", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    if (UserHookStore.MODE_PARAMS.equals(h.mode) && h.paramTypes.isEmpty()) {
-                        Toast.makeText(this, "参数替换模式需要填写参数类型", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    if (editIndex >= 0) {
-                        entry.hooks.set(editIndex, h);
+                .setTitle("更多")
+                .setItems(new String[]{"配置 LSPosed 作用域", "删除该应用配置"}, (d, which) -> {
+                    if (which == 0) {
+                        LSPosedHelper.openScope(this, pkg);
                     } else {
-                        entry.hooks.add(h);
+                        confirmDelete();
                     }
-                    persist();
                 })
                 .setNegativeButton("取消", null)
                 .show();
     }
 
-    private boolean applySmali(String text, EditText etClass, EditText etMethod,
-                               EditText etParams, EditText etValue) {
-        SmaliParser.Result r = SmaliParser.parse(text);
-        if (!r.ok) return false;
-        if (!r.className.isEmpty()) etClass.setText(r.className);
-        etMethod.setText(r.methodName);
-        etParams.setText(r.paramTypes);
-        if (!r.guessedValue.isEmpty()) etValue.setText(r.guessedValue);
-        return true;
+    private void confirmDelete() {
+        new AlertDialog.Builder(this)
+                .setTitle("删除 " + pkg + " 的配置？")
+                .setMessage("将移除该应用的所有自定义 Hook。")
+                .setPositiveButton("删除", (d, w) -> {
+                    List<UserHookStore.AppEntry> apps = UserHookStore.load(this);
+                    for (int i = apps.size() - 1; i >= 0; i--) {
+                        if (apps.get(i).pkg.equals(pkg)) apps.remove(i);
+                    }
+                    UserHookStore.save(this, apps);
+                    finish();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 导入：剪贴板是 JSON → 合并到本应用；是 smali → 打开新增页预填 */
+    private void importFromClipboard() {
+        String text = clipboardText();
+        if (text == null || text.trim().isEmpty()) {
+            Toast.makeText(this, "剪贴板为空", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String t = text.trim();
+        if (t.startsWith("{") || t.startsWith("[")) {
+            List<UserHookStore.AppEntry> imported = UserHookStore.parseConfig(t);
+            int n = 0;
+            for (UserHookStore.AppEntry a : imported) {
+                if (!a.hooks.isEmpty()) {
+                    entry.hooks.addAll(a.hooks);
+                    n += a.hooks.size();
+                }
+            }
+            if (n == 0) {
+                Toast.makeText(this, "未找到可用的 Hook 配置", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            persist();
+            adapter.reload();
+            Toast.makeText(this, "已导入 " + n + " 条 Hook", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        SmaliParser.Result r = SmaliParser.parse(t);
+        if (r.ok) {
+            ClipboardHolder.smali = t;
+            startActivity(HookAddActivity.intent(this, pkg));
+            return;
+        }
+        Toast.makeText(this, "无法识别（需要 JSON 配置或 smali 片段）", Toast.LENGTH_LONG).show();
     }
 
     private String clipboardText() {
@@ -272,29 +202,17 @@ public class HookEditActivity extends AppCompatActivity {
         }
     }
 
-    private void updateFieldVisibility(String mode, EditText etField, TextView label) {
-        boolean show = UserHookStore.MODE_STATIC.equals(mode) || UserHookStore.MODE_INSTANCE.equals(mode)
-                || UserHookStore.MODE_LOG_STATIC.equals(mode) || UserHookStore.MODE_LOG_INSTANCE.equals(mode);
-        etField.setVisibility(show ? View.VISIBLE : View.GONE);
-        label.setVisibility(show ? View.VISIBLE : View.GONE);
+    /** 供新增页读取一次性的 smali 文本 */
+    public static class ClipboardHolder {
+        public static String smali;
     }
-
-    private static String textOf(EditText e) {
-        return e.getText() == null ? "" : e.getText().toString().trim();
-    }
-
-    private int dp(int v) {
-        return (int) (v * getResources().getDisplayMetrics().density);
-    }
-
-    // ---------------- 列表适配器 ----------------
 
     private class HooksAdapter extends RecyclerView.Adapter<HooksAdapter.VH> {
         private final List<UserHookStore.HookEntry> data = new ArrayList<>();
 
         void reload() {
             data.clear();
-            data.addAll(entry.hooks);
+            if (entry != null) data.addAll(entry.hooks);
             notifyDataSetChanged();
         }
 
@@ -310,20 +228,42 @@ public class HookEditActivity extends AppCompatActivity {
             h.memo.setText(e.memo == null || e.memo.isEmpty()
                     ? (e.className.replace('.', '/') + "." + e.methodName)
                     : e.memo);
-            h.mode.setText(UserHookStore.modeLabel(e.mode));
+            h.mode.setText(UserHookStore.modeLabel(e.mode) + (e.enabled ? "" : "（已停用）"));
             h.cls.setText(e.className);
             StringBuilder sb = new StringBuilder();
             if (!e.methodName.isEmpty()) sb.append(e.methodName);
             if (!e.paramTypes.isEmpty()) sb.append("(").append(e.paramTypes).append(")");
             if (!e.value.isEmpty()) sb.append("  →  ").append(e.value);
-            if (!e.fieldName.isEmpty()) sb.append("  字段: ").append(e.fieldName);
+            if (!e.returnType.isEmpty()) sb.append("  : ").append(e.returnType);
             h.detail.setText(sb.length() == 0 ? "（点击编辑）" : sb.toString());
             h.del.setOnClickListener(v -> {
-                entry.hooks.remove(pos);
-                persist();
+                int idx = entry.hooks.indexOf(e);
+                if (idx >= 0) {
+                    entry.hooks.remove(idx);
+                    persist();
+                    reload();
+                }
             });
-            h.itemView.setOnClickListener(v ->
-                    showHookDialog(pos, e.mode, null));
+            h.itemView.setOnClickListener(v -> {
+                int idx = entry.hooks.indexOf(e);
+                if (idx >= 0) startActivity(HookAddActivity.intent(HookEditActivity.this, pkg, idx));
+            });
+            h.itemView.setOnLongClickListener(v -> {
+                new AlertDialog.Builder(HookEditActivity.this)
+                        .setTitle("Hook 操作")
+                        .setItems(new String[]{e.enabled ? "停用" : "启用", "删除"}, (d, w) -> {
+                            if (w == 0) {
+                                e.enabled = !e.enabled;
+                            } else {
+                                entry.hooks.remove(e);
+                            }
+                            persist();
+                            reload();
+                        })
+                        .setNegativeButton("取消", null)
+                        .show();
+                return true;
+            });
         }
 
         @Override
