@@ -272,7 +272,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void bindExtPage() {
         pageExt.findViewById(R.id.ext_scope_tip).setOnClickListener(v -> openScopeSettings());
-        checkExistingScope();
         EditText search = pageExt.findViewById(R.id.ext_search);
         RecyclerView list = pageExt.findViewById(R.id.ext_list);
         View empty = pageExt.findViewById(R.id.ext_empty);
@@ -342,22 +341,7 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(new Intent(this, AppPickerActivity.class), REQ_PICK_EXT);
     }
 
-    private void openExtEditor(String pkg, String label) {
-        String smali = pendingSmali;
-        pendingSmali = null;
-        // 已存在则直接编辑
-        for (UserHookStore.AppEntry a : extApps) {
-            if (a.pkg.equals(pkg)) {
-                startActivity(HookEditActivity.intent(this, pkg, a.label, smali));
-                return;
-            }
-        }
-        startActivity(HookEditActivity.intent(this, pkg, label, smali));
-    }
-
     // ---------------- 剪贴板 / 网络 / 分享 ----------------
-
-    private String pendingSmali;
 
     private String readClipboard() {
         try {
@@ -384,7 +368,6 @@ public class MainActivity extends AppCompatActivity {
             int n = importConfig(t);
             if (n > 0) {
                 Toast.makeText(this, "从剪贴板导入 " + n + " 条 hook", Toast.LENGTH_SHORT).show();
-                flushImportScopePrompt();
             } else {
                 Toast.makeText(this, "导入失败：JSON 里没有可用的 hook", Toast.LENGTH_SHORT).show();
             }
@@ -396,10 +379,9 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "smali 解析失败：" + r.error, Toast.LENGTH_SHORT).show();
                 return;
             }
-            pendingSmali = t;
             Toast.makeText(this, "识别: " + (r.className.isEmpty() ? r.methodName : r.className + "." + r.methodName)
-                    + "，请选择目标应用", Toast.LENGTH_LONG).show();
-            showAppPicker();
+                    + "\n请到目标应用 → 右上角齿轮 → 新建，点「从剪贴板 smali 填充」",
+                    Toast.LENGTH_LONG).show();
             return;
         }
         Toast.makeText(this, "剪贴板内容无法识别（需要 JSON 配置或 smali 片段）", Toast.LENGTH_LONG).show();
@@ -428,7 +410,6 @@ public class MainActivity extends AppCompatActivity {
                                 int n = importConfig(result);
                                 Toast.makeText(this, n > 0 ? "导入 " + n + " 条 hook"
                                         : "导入失败：无可用 hook", Toast.LENGTH_SHORT).show();
-                                if (n > 0) flushImportScopePrompt();
                             }
                         });
                     }).start();
@@ -498,13 +479,27 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(VH h, int pos) {
             final UserHookStore.AppEntry a = data.get(pos);
-            h.avatar.setText(a.label == null || a.label.isEmpty() ? "?" : a.label.substring(0, 1));
-            h.title.setText(a.label);
+            h.title.setText(a.label == null || a.label.isEmpty() ? a.pkg : a.label);
             h.pkg.setText(a.pkg);
-            h.count.setText(a.hooks.size() + " 条规则");
-            h.itemView.setOnClickListener(v ->
-                    startActivity(HookEditActivity.intent(MainActivity.this, a.pkg, a.label)));
-            h.itemView.setOnLongClickListener(v -> {
+            h.version.setText("版本: " + versionOf(a.pkg));
+            h.icon.setImageDrawable(appIcon(a.pkg));
+
+            h.check.setOnCheckedChangeListener(null);
+            h.check.setChecked(a.enabled);
+            h.check.setOnCheckedChangeListener((b, checked) -> {
+                a.enabled = checked;
+                UserHookStore.save(MainActivity.this, extApps);
+                if (checked) {
+                    showScopeRequest(a.pkg);
+                } else {
+                    Toast.makeText(MainActivity.this, "已停用，重启目标应用后生效", Toast.LENGTH_SHORT).show();
+                }
+            });
+
+            // 点击左半部分 → 进入「配置：应用」
+            h.open.setOnClickListener(v ->
+                    startActivity(AppConfigActivity.intent(MainActivity.this, a.pkg, a.label)));
+            h.open.setOnLongClickListener(v -> {
                 new AlertDialog.Builder(MainActivity.this)
                         .setTitle("移除 " + a.label + " 的拓展配置？")
                         .setPositiveButton("移除", (d, w) -> {
@@ -524,15 +519,37 @@ public class MainActivity extends AppCompatActivity {
         }
 
         class VH extends RecyclerView.ViewHolder {
-            TextView avatar, title, pkg, count;
+            android.widget.ImageView icon;
+            TextView title, pkg, version;
+            android.widget.CheckBox check;
+            View open;
 
             VH(View v) {
                 super(v);
-                avatar = v.findViewById(R.id.item_avatar);
-                title = v.findViewById(R.id.item_title);
-                pkg = v.findViewById(R.id.item_pkg);
-                count = v.findViewById(R.id.item_count);
+                icon = v.findViewById(R.id.ext_item_icon);
+                title = v.findViewById(R.id.ext_item_title);
+                pkg = v.findViewById(R.id.ext_item_pkg);
+                version = v.findViewById(R.id.ext_item_version);
+                check = v.findViewById(R.id.ext_item_check);
+                open = v.findViewById(R.id.ext_item_open);
             }
+        }
+    }
+
+    private String versionOf(String pkg) {
+        try {
+            return getPackageManager().getPackageInfo(pkg, 0).versionName == null
+                    ? "未知" : getPackageManager().getPackageInfo(pkg, 0).versionName;
+        } catch (Throwable t) {
+            return "未知";
+        }
+    }
+
+    private android.graphics.drawable.Drawable appIcon(String pkg) {
+        try {
+            return getPackageManager().getApplicationIcon(pkg);
+        } catch (Throwable t) {
+            return new android.graphics.drawable.ColorDrawable(0xFFF6DFCE);
         }
     }
 
@@ -627,8 +644,6 @@ public class MainActivity extends AppCompatActivity {
             ArrayList<String> labels = data.getStringArrayListExtra("labels");
             if (pkgs == null || pkgs.isEmpty()) return;
             int added = 0;
-            final String[] first = {null, null};
-            final List<String> newPkgs = new ArrayList<>();
             for (int i = 0; i < pkgs.size(); i++) {
                 String pkg = pkgs.get(i), label = labels.get(i);
                 boolean exists = false;
@@ -642,22 +657,18 @@ public class MainActivity extends AppCompatActivity {
                     UserHookStore.AppEntry e = new UserHookStore.AppEntry();
                     e.pkg = pkg;
                     e.label = label;
+                    e.enabled = false; // 只添加，等用户勾选启用
                     extApps.add(e);
                     added++;
-                    newPkgs.add(pkg);
-                }
-                if (first[0] == null) {
-                    first[0] = pkg;
-                    first[1] = label;
                 }
             }
             UserHookStore.save(this, extApps);
             refreshExt();
+            // 选中应用后只添加到拓展列表，不跳转、不弹窗；由用户自行勾选启用
             if (added > 0) {
-                Toast.makeText(this, "已添加 " + added + " 个应用", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "已添加 " + added + " 个应用，勾选右侧方框以启用",
+                        Toast.LENGTH_SHORT).show();
             }
-            // 新增应用必须先勾选 LSPosed 作用域，否则 hook 不会注入
-            promptScopeIfNeeded(newPkgs, () -> openExtEditor(first[0], first[1]));
             return;
         }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
@@ -669,7 +680,6 @@ public class MainActivity extends AppCompatActivity {
                 is.close();
                 int n = importConfig(text);
                 Toast.makeText(this, "导入 " + n + " 条 hook", Toast.LENGTH_SHORT).show();
-                if (n > 0) flushImportScopePrompt();
             } catch (Throwable t) {
                 Toast.makeText(this, "导入失败：" + t.getMessage(), Toast.LENGTH_SHORT).show();
             }
@@ -699,7 +709,6 @@ public class MainActivity extends AppCompatActivity {
             }
             if (exist == null) {
                 extApps.add(na);
-                newPkgsFromLastImport.add(na.pkg);
             } else {
                 exist.hooks.addAll(na.hooks);
             }
@@ -710,82 +719,49 @@ public class MainActivity extends AppCompatActivity {
         return count;
     }
 
-    private final List<String> newPkgsFromLastImport = new ArrayList<>();
-
-    private void flushImportScopePrompt() {
-        if (newPkgsFromLastImport.isEmpty()) return;
-        List<String> pkgs = new ArrayList<>(newPkgsFromLastImport);
-        newPkgsFromLastImport.clear();
-        promptScopeIfNeeded(pkgs, null);
-    }
-
-    // ---------------- LSPosed 作用域引导 ----------------
+    // ---------------- LSPosed 作用域请求 ----------------
 
     private static final String SCOPE_PREFS = "scope_prompted";
 
-    /**
-     * 新增目标应用后引导勾选 LSPosed 作用域。
-     * Xposed 模块只会被注入到作用域里勾选的应用，未勾选时导入的 hook 一定不生效。
-     */
-    private void promptScopeIfNeeded(List<String> newPkgs, Runnable onSkip) {
-        List<String> fresh = new ArrayList<>();
-        if (newPkgs != null) {
-            for (String p : newPkgs) {
-                if (p != null && !p.isEmpty()
-                        && !getSharedPreferences(SCOPE_PREFS, MODE_PRIVATE).getBoolean(p, false)) {
-                    fresh.add(p);
-                }
-            }
-        }
-        if (fresh.isEmpty()) {
-            if (onSkip != null) onSkip.run();
+    /** 勾选启用某个应用时弹出作用域请求（图 2 样式） */
+    private void showScopeRequest(String target) {
+        if (getSharedPreferences(SCOPE_PREFS, MODE_PRIVATE).getBoolean("never", false)) {
+            Toast.makeText(this, "已启用，如需生效请在 LSPosed 勾选作用域", Toast.LENGTH_SHORT).show();
             return;
         }
-        android.content.SharedPreferences.Editor ed =
-                getSharedPreferences(SCOPE_PREFS, MODE_PRIVATE).edit();
-        for (String p : fresh) ed.putBoolean(p, true);
-        ed.apply();
-
-        final String target = fresh.get(0);
-        StringBuilder sb = new StringBuilder();
-        int n = Math.min(fresh.size(), 6);
-        for (int i = 0; i < n; i++) {
-            sb.append("· ").append(fresh.get(i)).append("\n");
+        View view = getLayoutInflater().inflate(R.layout.dialog_scope_request, null);
+        ((TextView) view.findViewById(R.id.sr_text)).setText(
+                "用户 主机 (0) 上的 " + getPackageName() + " 请求将 ["
+                        + target + "] 添加至其作用域。");
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setView(view)
+                .setCancelable(true)
+                .create();
+        view.findViewById(R.id.sr_allow).setOnClickListener(v -> {
+            dlg.dismiss();
+            LSPosedHelper.openScope(this, target);
+        });
+        view.findViewById(R.id.sr_deny).setOnClickListener(v -> {
+            dlg.dismiss();
+            Toast.makeText(this, "未添加作用域，Hook 不会生效", Toast.LENGTH_SHORT).show();
+        });
+        view.findViewById(R.id.sr_never).setOnClickListener(v -> {
+            getSharedPreferences(SCOPE_PREFS, MODE_PRIVATE)
+                    .edit().putBoolean("never", true).apply();
+            dlg.dismiss();
+            Toast.makeText(this, "以后不再提示", Toast.LENGTH_SHORT).show();
+        });
+        dlg.show();
+        if (dlg.getWindow() != null) {
+            dlg.getWindow().setGravity(android.view.Gravity.TOP);
+            dlg.getWindow().setLayout(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
         }
-        if (fresh.size() > n) sb.append("· 等 ").append(fresh.size()).append(" 个应用\n");
-
-        new AlertDialog.Builder(this)
-                .setTitle("需要勾选 LSPosed 作用域")
-                .setMessage("已添加：\n" + sb
-                        + "\nXposed 模块只会被注入到 LSPosed「作用域」中勾选的应用。未勾选时，"
-                        + "导入的 Hook 完全不会执行（SimpleHook 也是这个机制）。\n\n"
-                        + "请勾选上述应用后，强制停止并重新打开目标应用。")
-                .setPositiveButton("去勾选作用域", (d, w) -> {
-                    // 先保留配置页（含 smali 预填），再打开 LSPosed，返回后可直接继续配置
-                    if (onSkip != null) onSkip.run();
-                    LSPosedHelper.openScope(this, target);
-                })
-                .setNegativeButton("稍后", (d, w) -> {
-                    if (onSkip != null) onSkip.run();
-                })
-                .setOnCancelListener(d -> {
-                    if (onSkip != null) onSkip.run();
-                })
-                .show();
     }
 
     private void openScopeSettings() {
         LSPosedHelper.openScope(this, null);
-    }
-
-    /** 已有拓展配置但从未提示过作用域时，进入拓展页补一次提示（每个包只提示一次） */
-    private void checkExistingScope() {
-        if (extApps == null || extApps.isEmpty()) return;
-        List<String> pkgs = new ArrayList<>();
-        for (UserHookStore.AppEntry a : extApps) {
-            if (a.pkg != null && !a.pkg.isEmpty()) pkgs.add(a.pkg);
-        }
-        promptScopeIfNeeded(pkgs, null);
     }
 
     private void confirmClearExt() {
