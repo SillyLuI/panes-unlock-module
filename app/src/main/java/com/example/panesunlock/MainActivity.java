@@ -60,10 +60,7 @@ public class MainActivity extends AppCompatActivity {
         extApps = UserHookStore.load(this);
 
         bindNav();
-        setupHome();
         setupApps();
-        setupExt();
-        setupSettings();
         showPage(0);
     }
 
@@ -147,9 +144,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ---------------- 首页 ----------------
-
-    private void setupHome() {
-    }
 
     private void fillHome() {
         if (pageHome == null) return;
@@ -360,14 +354,14 @@ public class MainActivity extends AppCompatActivity {
         startActivity(HookEditActivity.intent(this, pkg, label));
     }
 
+    private interface OnPick {
+        void pick(String pkg, String label);
+    }
+
     private class PickerAdapter extends RecyclerView.Adapter<PickerAdapter.VH> {
         private final Map<String, String> all;
         private final List<String> shown = new ArrayList<>();
         private OnPick onPick;
-
-        interface OnPick {
-            void pick(String pkg, String label);
-        }
 
         PickerAdapter(Map<String, String> all, List<String> initial) {
             this.all = all;
