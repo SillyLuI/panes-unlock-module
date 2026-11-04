@@ -52,12 +52,22 @@
         <activity
             android:name=".HookEditActivity"
             android:exported="false"
-            android:label="Hook 编辑" />
+            android:label="Hook 配置" />
 
         <activity
             android:name=".AppPickerActivity"
             android:exported="false"
             android:label="选择应用" />
+
+        <activity
+            android:name=".AppConfigActivity"
+            android:exported="false"
+            android:label="应用配置" />
+
+        <activity
+            android:name=".HookAddActivity"
+            android:exported="false"
+            android:label="新增配置" />
 
     </application>
 </manifest>
