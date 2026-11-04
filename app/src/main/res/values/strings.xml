@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">多应用解锁模块</string>
-    <string name="title">多应用解锁模块</string>
-    <string name="subtitle">配置驱动 · 支持格窗 / 次元库 / Moviebase 等</string>
-    <string name="footer">使用方法：\n1. 在 LSPosed 里启用本模块\n2. 作用域勾选下方「已支持」应用及其宿主进程\n3. 软重启后生效\n\n新增/修改目标应用：编辑 assets/hooks.json 后重编</string>
+    <string name="app_name">Panes Unlock</string>
+    <string name="nav_home">首页</string>
+    <string name="nav_apps">应用</string>
+    <string name="nav_ext">拓展</string>
+    <string name="nav_settings">设置</string>
+    <string name="search_app_hint">搜索应用</string>
+    <string name="empty_ext">(。・ω・。)</string>
+    <string name="empty_ext_tip">这里还空着，先去添加一个需要的应用吧！</string>
 </resources>
