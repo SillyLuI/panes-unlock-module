@@ -51,9 +51,13 @@
 `MultiAppHookModule` 新增 `hookPanesLicense()`：
 
 - 在 `com.android.systemui`（宿主）与 `io.github.yishisanren.panes` 进程内查找混淆类 `wg`；
-- 类还没加载时（它在格窗自己的 ClassLoader 里），挂 `ClassLoader.loadClass` 监听，
-  真正加载到 `wg` 时补挂；
+- 类还没加载时（它在格窗自己的 ClassLoader 里），挂 `ClassLoader.loadClass` /
+  `BaseDexClassLoader.findClass` 监听，真正加载到目标类时补挂；
 - 结构校验通过后，把 `wg.a()Z`（功能放行）与 `wg.c()Z`（已购买）无条件返回 `true`；
+- 同一进程里格窗可能加载多份 dex，按 Class 身份逐个副本挂，不再只挂第一份；
+- 兜底：`NeXtepWindowController` 的 `paidAllowed` / `pauseTrialAllows` /
+  `turnsLandscape` 直接返回 `true`，`WorkbenchToolsController.showUnlockPrompt`
+  直接不弹（避免解锁提示挡住任务界面）；
 - 保留原有 Bundle 伪造，设置页与功能两侧同时成立。
 
 只为 `wg` 的无参布尔方法挂 hook，不触碰其它 `a()` 重载，避免误伤。

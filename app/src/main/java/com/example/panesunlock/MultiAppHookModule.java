@@ -43,7 +43,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * 这就是“显示已解锁、功能没效果”的根因。
      */
     private static final String PANES_LICENSE_CLASS = "wg";
-    private static volatile boolean licenseHooked = false;
+    private static final String PANES_CONTROLLER_CLASS =
+            "io.github.lujinxin.nextep.systemui.NeXtepWindowController";
+    private static final String PANES_TOOLS_CLASS =
+            "io.github.lujinxin.nextep.systemui.WorkbenchToolsController";
+    /** 已经挂过的类：格窗会用自己的 ClassLoader 多次加载同一份 dex，必须逐个副本都挂。 */
+    private static final java.util.Set<Class<?>> LICENSE_HOOKED =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Class<?>, Boolean>());
     private static volatile boolean licenseWatcherInstalled = false;
 
     private static final String K_UNLOCKED = "io.github.yishisanren.panes.extra.LICENSE_UNLOCKED";
@@ -673,43 +679,57 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * 只把 wg.a()（功能是否放行）和 wg.c()（是否已购买）强制为 true。
      */
     private void hookPanesLicense(XC_LoadPackage.LoadPackageParam lp) {
-        if (licenseHooked) return;
-        try {
-            Class<?> c = XposedHelpers.findClass(PANES_LICENSE_CLASS, lp.classLoader);
-            installLicenseHooks(c);
-            if (licenseHooked) return;
-        } catch (Throwable ignored) {
-            // 目标类尚未加载，转由下面的类加载监听补挂
+        XposedBridge.log("[PanesUnlock] 已注入进程 " + lp.packageName + " / " + lp.processName);
+        for (String name : new String[]{
+                PANES_LICENSE_CLASS, PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS}) {
+            try {
+                installForClass(XposedHelpers.findClass(name, lp.classLoader));
+            } catch (Throwable ignored) {
+                // 目标类尚未加载，转由下面的类加载监听补挂
+            }
         }
         installLicenseClassWatcher();
     }
 
+    /** 按类名分派到对应的 hook 安装逻辑。 */
+    private static void installForClass(Class<?> c) {
+        if (c == null) return;
+        String n = c.getName();
+        if (PANES_LICENSE_CLASS.equals(n)) {
+            installLicenseHooks(c);
+        } else if (PANES_CONTROLLER_CLASS.equals(n)) {
+            hookController(c);
+        } else if (PANES_TOOLS_CLASS.equals(n)) {
+            hookTools(c);
+        }
+    }
+
     private void installLicenseClassWatcher() {
         synchronized (MultiAppHookModule.class) {
-            if (licenseWatcherInstalled || licenseHooked) return;
+            if (licenseWatcherInstalled) return;
             licenseWatcherInstalled = true;
         }
         try {
-            XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
+            XC_MethodHook onLoaded = new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) {
-                    if (licenseHooked) return;
                     Object r = p.getResult();
                     if (!(r instanceof Class)) return;
-                    Class<?> c = (Class<?>) r;
-                    if (PANES_LICENSE_CLASS.equals(c.getName())) {
-                        installLicenseHooks(c);
-                    }
+                    installForClass((Class<?>) r);
                 }
-            });
-            XposedBridge.log("[PanesUnlock] 已监听 " + PANES_LICENSE_CLASS + " 的类加载");
+            };
+            XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", onLoaded);
+            // 少数注入实现绕过 loadClass 直接走 findClass，这里补一层
+            Class<?> dexLoader = XposedHelpers.findClass("dalvik.system.BaseDexClassLoader", null);
+            XposedBridge.hookAllMethods(dexLoader, "findClass", onLoaded);
+            XposedBridge.log("[PanesUnlock] 已监听格窗宿主类的加载");
         } catch (Throwable t) {
             XposedBridge.log("[PanesUnlock] 注册授权类监听失败: " + t);
         }
     }
 
     private static synchronized void installLicenseHooks(Class<?> clazz) {
-        if (licenseHooked || clazz == null) return;
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
         // 结构校验：wg 拥有 a()Z / c()Z / f()Z 三个无参布尔方法，避免短类名误撞
         boolean hasA = false, hasC = false, hasF = false;
         List<Method> targets = new ArrayList<>();
@@ -730,6 +750,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             XposedBridge.log("[PanesUnlock] " + clazz.getName() + " 结构不匹配，跳过");
             return;
         }
+        LICENSE_HOOKED.add(clazz);
         XC_MethodHook forceTrue = new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
@@ -745,9 +766,51 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 XposedBridge.log("[PanesUnlock] hook " + m + " 失败: " + t);
             }
         }
-        licenseHooked = ok > 0;
         XposedBridge.log("[PanesUnlock] 授权闸门已放行: " + clazz.getName()
                 + "（" + ok + " 个方法，loader=" + clazz.getClassLoader() + "）");
+    }
+
+    /** 兜底：直接放行宿主自己的付费判断，不依赖 wg 是否被挂上。 */
+    private static synchronized void hookController(Class<?> clazz) {
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
+        LICENSE_HOOKED.add(clazz);
+        XC_MethodHook forceTrue = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                if (p.getResult() instanceof Boolean) {
+                    p.setResult(Boolean.TRUE);
+                }
+            }
+        };
+        int ok = 0;
+        for (String name : new String[]{"paidAllowed", "pauseTrialAllows", "turnsLandscape"}) {
+            try {
+                XposedBridge.hookAllMethods(clazz, name, forceTrue);
+                ok++;
+            } catch (Throwable t) {
+                XposedBridge.log("[PanesUnlock] hook " + name + " 失败: " + t);
+            }
+        }
+        XposedBridge.log("[PanesUnlock] 宿主付费判断已放行 " + ok + " 个方法（"
+                + clazz.getClassLoader() + "）");
+    }
+
+    /** 兜底：解锁提示弹窗直接不弹，避免挡住任务界面。 */
+    private static synchronized void hookTools(Class<?> clazz) {
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
+        LICENSE_HOOKED.add(clazz);
+        XC_MethodHook skip = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(null);
+            }
+        };
+        try {
+            XposedBridge.hookAllMethods(clazz, "showUnlockPrompt", skip);
+            XposedBridge.log("[PanesUnlock] 解锁提示已屏蔽（" + clazz.getClassLoader() + "）");
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 屏蔽解锁提示失败: " + t);
+        }
     }
 
     /** 应用一条通用规则（simplehook 式）。 */
