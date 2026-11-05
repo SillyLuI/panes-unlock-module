@@ -36,6 +36,16 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static final String PANES = "io.github.yishisanren.panes";
     private static final String SYSTEMUI = "com.android.systemui";
 
+    /**
+     * 格窗宿主里真正的授权闸门：混淆类 wg（默认包），run 在 SystemUI 进程。
+     * 设置页显示的“已解锁”只读 Bundle，而功能是否可用全部走 wg.a()（见
+     * NeXtepWindowController.paidAllowed / pauseTrialAllows / turnsLandscape）。
+     * 这就是“显示已解锁、功能没效果”的根因。
+     */
+    private static final String PANES_LICENSE_CLASS = "wg";
+    private static volatile boolean licenseHooked = false;
+    private static volatile boolean licenseWatcherInstalled = false;
+
     private static final String K_UNLOCKED = "io.github.yishisanren.panes.extra.LICENSE_UNLOCKED";
     private static final String K_TRIAL = "io.github.yishisanren.panes.extra.LICENSE_TRIAL";
     private static final String K_MACHINE = "io.github.yishisanren.panes.extra.LICENSE_MACHINE";
@@ -65,6 +75,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             } catch (Throwable ignored) {
                 // 框架类必然存在
             }
+            // 真正放行功能：SystemUI 里的 wg 授权校验
+            hookPanesLicense(lpparam);
         }
 
         // 通用应用规则（可在模块 App 里按包名开关）
@@ -649,6 +661,93 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         XposedHelpers.findAndHookMethod(baseBundle, "getLong", String.class, long.class, longHook);
         XposedHelpers.findAndHookMethod(baseBundle, "getString", String.class, strHook);
         XposedHelpers.findAndHookMethod(baseBundle, "getString", String.class, String.class, strHook);
+    }
+
+    // ---------------- 格窗真正的授权闸门（SystemUI 侧 wg） ----------------
+
+    /**
+     * 放行格窗宿主里的授权校验。
+     *
+     * wg 是格窗模块注入 SystemUI 后才加载的类，且往往在另一个 ClassLoader 里，
+     * handleLoadPackage 阶段通常还不可见；因此先直取，取不到就监听类加载。
+     * 只把 wg.a()（功能是否放行）和 wg.c()（是否已购买）强制为 true。
+     */
+    private void hookPanesLicense(XC_LoadPackage.LoadPackageParam lp) {
+        if (licenseHooked) return;
+        try {
+            Class<?> c = XposedHelpers.findClass(PANES_LICENSE_CLASS, lp.classLoader);
+            installLicenseHooks(c);
+            if (licenseHooked) return;
+        } catch (Throwable ignored) {
+            // 目标类尚未加载，转由下面的类加载监听补挂
+        }
+        installLicenseClassWatcher();
+    }
+
+    private void installLicenseClassWatcher() {
+        synchronized (MultiAppHookModule.class) {
+            if (licenseWatcherInstalled || licenseHooked) return;
+            licenseWatcherInstalled = true;
+        }
+        try {
+            XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    if (licenseHooked) return;
+                    Object r = p.getResult();
+                    if (!(r instanceof Class)) return;
+                    Class<?> c = (Class<?>) r;
+                    if (PANES_LICENSE_CLASS.equals(c.getName())) {
+                        installLicenseHooks(c);
+                    }
+                }
+            });
+            XposedBridge.log("[PanesUnlock] 已监听 " + PANES_LICENSE_CLASS + " 的类加载");
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 注册授权类监听失败: " + t);
+        }
+    }
+
+    private static synchronized void installLicenseHooks(Class<?> clazz) {
+        if (licenseHooked || clazz == null) return;
+        // 结构校验：wg 拥有 a()Z / c()Z / f()Z 三个无参布尔方法，避免短类名误撞
+        boolean hasA = false, hasC = false, hasF = false;
+        List<Method> targets = new ArrayList<>();
+        for (Method m : clazz.getDeclaredMethods()) {
+            if (m.getParameterCount() != 0 || m.getReturnType() != boolean.class) continue;
+            String n = m.getName();
+            if ("a".equals(n)) {
+                hasA = true;
+                targets.add(m);
+            } else if ("c".equals(n)) {
+                hasC = true;
+                targets.add(m);
+            } else if ("f".equals(n)) {
+                hasF = true;
+            }
+        }
+        if (!hasA || !hasC || !hasF) {
+            XposedBridge.log("[PanesUnlock] " + clazz.getName() + " 结构不匹配，跳过");
+            return;
+        }
+        XC_MethodHook forceTrue = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                p.setResult(Boolean.TRUE);
+            }
+        };
+        int ok = 0;
+        for (Method m : targets) {
+            try {
+                XposedBridge.hookMethod(m, forceTrue);
+                ok++;
+            } catch (Throwable t) {
+                XposedBridge.log("[PanesUnlock] hook " + m + " 失败: " + t);
+            }
+        }
+        licenseHooked = ok > 0;
+        XposedBridge.log("[PanesUnlock] 授权闸门已放行: " + clazz.getName()
+                + "（" + ok + " 个方法，loader=" + clazz.getClassLoader() + "）");
     }
 
     /** 应用一条通用规则（simplehook 式）。 */

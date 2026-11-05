@@ -3,7 +3,7 @@
     {
       "name": "格窗工作台",
       "pkg": "io.github.yishisanren.panes",
-      "note": "通过强制 LICENSE_UNLOCKED / TRIAL（覆盖 App 与 SystemUI 宿主）+ 注入试用令牌解锁",
+      "note": "bundle_forge 只负责设置页显示；功能闸门是 SystemUI 进程里的 wg.a()，由 MultiAppHookModule.hookPanesLicense 强制为 true",
       "rules": [
         { "type": "bundle_forge" }
       ]
