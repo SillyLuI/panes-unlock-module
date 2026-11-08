@@ -705,18 +705,47 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * handleLoadPackage 阶段通常还不可见；因此先直取，取不到就监听类加载。
      * 只把 wg.a()（功能是否放行）和 wg.c()（是否已购买）强制为 true。
      */
+    private static final String[] TARGET_CLASSES = {
+            PANES_LICENSE_CLASS, PANES_LICENSE_STATE_CLASS,
+            PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS
+    };
+    /** 防止 installAllFromLoader 触发的 loadClass 再次进入而无限递归。 */
+    private static final ThreadLocal<Boolean> EXPANDING = new ThreadLocal<Boolean>();
+
     private void hookPanesLicense(XC_LoadPackage.LoadPackageParam lp) {
         XposedBridge.log("[PanesUnlock] 已注入进程 " + lp.packageName + " / " + lp.processName);
-        for (String name : new String[]{
-                PANES_LICENSE_CLASS, PANES_LICENSE_STATE_CLASS,
-                PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS}) {
-            try {
-                installForClass(XposedHelpers.findClass(name, lp.classLoader));
-            } catch (Throwable ignored) {
-                // 目标类尚未加载，转由下面的类加载监听补挂
-            }
-        }
+        installAllFromLoader(lp.classLoader);
         installLicenseClassWatcher();
+    }
+
+    /**
+     * 用给定 ClassLoader 把所有目标类都找出来并挂上。
+     * 关键：格窗的目标类常在其自己的 LSPModuleClassLoader 里、且多数在我们注入前已加载完，
+     * 仅靠 loadClass 监听会漏；只要拿到任一类，就用它的加载器把其余类 findClass 出来补挂
+     * （已加载的类同样能取到）。
+     */
+    private static void installAllFromLoader(ClassLoader cl) {
+        if (cl == null) return;
+        if (Boolean.TRUE.equals(EXPANDING.get())) return;
+        EXPANDING.set(Boolean.TRUE);
+        try {
+            for (String name : TARGET_CLASSES) {
+                try {
+                    installForClass(XposedHelpers.findClass(name, cl));
+                } catch (Throwable ignored) {
+                    // 该加载器里没有这个类
+                }
+            }
+        } finally {
+            EXPANDING.set(Boolean.FALSE);
+        }
+    }
+
+    private static boolean isTarget(String n) {
+        for (String name : TARGET_CLASSES) {
+            if (name.equals(n)) return true;
+        }
+        return false;
     }
 
     /** 按类名分派到对应的 hook 安装逻辑。 */
@@ -747,7 +776,10 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam p) {
                     Object r = p.getResult();
                     if (!(r instanceof Class)) return;
-                    installForClass((Class<?>) r);
+                    Class<?> c = (Class<?>) r;
+                    if (!isTarget(c.getName())) return;
+                    // 命中任一目标类：用它自己的加载器把其余目标类一并补挂（含已提前加载的）
+                    installAllFromLoader(c.getClassLoader());
                 }
             };
             XposedBridge.hookAllMethods(ClassLoader.class, "loadClass", onLoaded);
