@@ -969,39 +969,44 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     }
 
     /**
-     * 格窗授权状态类 Leerwybvpn（3.4.9）：直接强制其两个状态方法，使“已解锁 / 试用有效”恒成立。
-     *  - vcgrsm() 返回解锁态 int，0=未解锁；非 0 时 workbenchState() 会把 LICENSE_UNLOCKED 置 true，
-     *    且 SystemUI 的试用弹窗（trialOnOpen）会直接跳过。用 before 短路，避免其结果被缓存回 0。
-     *  - pkakbmyyn() 返回试用有效性；非 0 态下本就为 true，这里兜底再强制一次。
-     * 这样 3.4.9 的“试用已结束”不会再出现，设置页显示已解锁。
+     * 格窗授权状态类：动态强制其“试用有效 / 已解锁”状态，版本无关。
+     * R8 每个版本都会改名，所以不再写死方法名，而是遍历该类：
+     *  - 所有无参 boolean 方法 → 强制 true（覆盖“试用有效”和“自校验”）
+     *  - 所有无参 int 方法 → 强制 2（非 0 即“已解锁”，workbenchState 的 LICENSE_UNLOCKED 随之置 true）
+     * 用 before 短路，避免其结果被缓存回旧的 false/0。
+     * 3.4.9: pkakbmyyn()Z / vcgrsm()I；3.5.0: xmbwzzit()Z / zhtqubpat()I，均自动命中。
      */
     private static synchronized void hookLicenseManager(Class<?> clazz) {
         if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
         LICENSE_HOOKED.add(clazz);
-        XC_MethodHook vcgrsmHook = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) {
-                p.setResult(Integer.valueOf(2)); // 非 0 即代表已授权
-            }
-        };
-        XC_MethodHook trialHook = new XC_MethodHook() {
+        XC_MethodHook boolTrue = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) {
                 p.setResult(Boolean.TRUE);
             }
         };
+        XC_MethodHook intUnlocked = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(Integer.valueOf(2)); // 非 0 即代表已授权
+            }
+        };
         int ok = 0;
-        try {
-            XposedBridge.hookAllMethods(clazz, "vcgrsm", vcgrsmHook);
-            ok++;
-        } catch (Throwable t) {
-            XposedBridge.log("[PanesUnlock] hook vcgrsm 失败: " + t);
-        }
-        try {
-            XposedBridge.hookAllMethods(clazz, "pkakbmyyn", trialHook);
-            ok++;
-        } catch (Throwable t) {
-            XposedBridge.log("[PanesUnlock] hook pkakbmyyn 失败: " + t);
+        for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
+            if (m.getParameterCount() != 0) continue;
+            if (m.isSynthetic() || m.isBridge()) continue;
+            Class<?> rt = m.getReturnType();
+            try {
+                if (rt == boolean.class) {
+                    XposedBridge.hookMethod(m, boolTrue);
+                    ok++;
+                } else if (rt == int.class) {
+                    XposedBridge.hookMethod(m, intUnlocked);
+                    ok++;
+                }
+            } catch (Throwable t) {
+                XposedBridge.log("[PanesUnlock] hook " + m.getName() + " 失败: " + t);
+            }
         }
         XposedBridge.log("[PanesUnlock] 授权状态类已强制已解锁 " + clazz.getName()
                 + "（" + ok + " 个方法，" + clazz.getClassLoader() + "）");
