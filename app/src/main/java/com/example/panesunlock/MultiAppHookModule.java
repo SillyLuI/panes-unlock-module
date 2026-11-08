@@ -906,6 +906,19 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 XposedBridge.log("[PanesUnlock] hook " + name + " 失败: " + t);
             }
         }
+        // 关键：直接按 license 字段类型挂授权状态类（Leerwybvpn），不依赖按类名补挂。
+        // observeTasks 里是直接调 license.pkakbmyyn() 决定“置顶播放 vs 只横过来”，
+        // 只要控制器被挂上，这里就把它的 license 类一并搞定。
+        try {
+            java.lang.reflect.Field lf = clazz.getDeclaredField("license");
+            lf.setAccessible(true);
+            Class<?> lic = lf.getType();
+            if (lic != null && !lic.isPrimitive()) {
+                hookLicenseManager(lic);
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 从 license 字段挂授权状态类失败: " + t);
+        }
         XposedBridge.log("[PanesUnlock] 宿主付费判断已放行 " + ok + " 个方法（"
                 + clazz.getClassLoader() + "）");
     }
