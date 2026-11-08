@@ -45,6 +45,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * 这就是“显示已解锁、功能没效果”的根因。
      */
     private static final String PANES_LICENSE_CLASS = "wg";
+    /** 格窗授权状态类（默认包），决定 LICENSE_UNLOCKED / 试用有效性；3.4.9 起试用改签名态、走服务端校验。 */
+    private static final String PANES_LICENSE_STATE_CLASS = "Leerwybvpn";
     private static final String PANES_CONTROLLER_CLASS =
             "io.github.lujinxin.nextep.systemui.NeXtepWindowController";
     private static final String PANES_TOOLS_CLASS =
@@ -685,7 +687,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private void hookPanesLicense(XC_LoadPackage.LoadPackageParam lp) {
         XposedBridge.log("[PanesUnlock] 已注入进程 " + lp.packageName + " / " + lp.processName);
         for (String name : new String[]{
-                PANES_LICENSE_CLASS, PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS}) {
+                PANES_LICENSE_CLASS, PANES_LICENSE_STATE_CLASS,
+                PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS}) {
             try {
                 installForClass(XposedHelpers.findClass(name, lp.classLoader));
             } catch (Throwable ignored) {
@@ -703,6 +706,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             installLicenseHooks(c);
         } else if (PANES_CONTROLLER_CLASS.equals(n)) {
             hookController(c);
+        } else if (PANES_LICENSE_STATE_CLASS.equals(n)) {
+            hookLicenseManager(c);
         } else if (PANES_TOOLS_CLASS.equals(n)) {
             hookTools(c);
         }
@@ -859,6 +864,45 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[PanesUnlock] 屏蔽解锁提示失败: " + t);
         }
+    }
+
+    /**
+     * 格窗授权状态类 Leerwybvpn（3.4.9）：直接强制其两个状态方法，使“已解锁 / 试用有效”恒成立。
+     *  - vcgrsm() 返回解锁态 int，0=未解锁；非 0 时 workbenchState() 会把 LICENSE_UNLOCKED 置 true，
+     *    且 SystemUI 的试用弹窗（trialOnOpen）会直接跳过。用 before 短路，避免其结果被缓存回 0。
+     *  - pkakbmyyn() 返回试用有效性；非 0 态下本就为 true，这里兜底再强制一次。
+     * 这样 3.4.9 的“试用已结束”不会再出现，设置页显示已解锁。
+     */
+    private static synchronized void hookLicenseManager(Class<?> clazz) {
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
+        LICENSE_HOOKED.add(clazz);
+        XC_MethodHook vcgrsmHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(Integer.valueOf(2)); // 非 0 即代表已授权
+            }
+        };
+        XC_MethodHook trialHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(Boolean.TRUE);
+            }
+        };
+        int ok = 0;
+        try {
+            XposedBridge.hookAllMethods(clazz, "vcgrsm", vcgrsmHook);
+            ok++;
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] hook vcgrsm 失败: " + t);
+        }
+        try {
+            XposedBridge.hookAllMethods(clazz, "pkakbmyyn", trialHook);
+            ok++;
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] hook pkakbmyyn 失败: " + t);
+        }
+        XposedBridge.log("[PanesUnlock] 授权状态类已强制已解锁 " + clazz.getName()
+                + "（" + ok + " 个方法，" + clazz.getClassLoader() + "）");
     }
 
     /** 应用一条通用规则（simplehook 式）。 */
