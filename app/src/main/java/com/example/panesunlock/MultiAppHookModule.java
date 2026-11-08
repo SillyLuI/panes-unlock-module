@@ -80,8 +80,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         if (CONFIG == null) return;
         String pkg = lpparam.packageName;
 
-        // 格窗主机制：覆盖 App 与 SystemUI 宿主进程
-        if (PANES.equals(pkg) || SYSTEMUI.equals(pkg)) {
+        // 格窗主机制：覆盖 App、SystemUI 以及 system_server
+        // 格窗的窗口/场景控制（置顶播放、slot 交换、多场景）在 system 进程里执行，必须一并放行
+        String proc = lpparam.processName;
+        boolean panesHost = PANES.equals(pkg) || SYSTEMUI.equals(pkg)
+                || "android".equals(pkg) || "system".equals(pkg)
+                || "android".equals(proc) || "system".equals(proc);
+        if (panesHost) {
             try {
                 Class<?> baseBundle = XposedHelpers.findClass("android.os.BaseBundle", lpparam.classLoader);
                 hookBundle(baseBundle);
@@ -94,10 +99,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 hookBundle(bundle);
             } catch (Throwable ignored) {
             }
-            // 真正放行功能：SystemUI 里的 wg 授权校验
+            // 真正放行功能：格窗授权校验（App / SystemUI / system_server）
             hookPanesLicense(lpparam);
             // 方案 B：隐藏本模块包，使格窗的模块检测枚举不到
-            hookHideModulePackage(lpparam);
+            // 仅在格窗 App / SystemUI 做，避免影响 system_server 的包管理
+            if (PANES.equals(pkg) || SYSTEMUI.equals(pkg)) {
+                hookHideModulePackage(lpparam);
+            }
         }
 
         // 通用应用规则（可在模块 App 里按包名开关）
