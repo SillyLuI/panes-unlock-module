@@ -26,10 +26,6 @@
         <meta-data
             android:name="xposeddescription"
             android:value="多应用解锁模块：内置配置 hook + SimpleHook 式用户自定义拓展" />
-        <!-- LSPosed 作用域：按需勾选目标应用及其宿主（旧 Xposed 兼容） -->
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposedscope" />
 
         <activity
             android:name=".MainActivity"

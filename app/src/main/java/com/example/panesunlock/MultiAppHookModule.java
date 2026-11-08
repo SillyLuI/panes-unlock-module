@@ -35,6 +35,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
 
     private static final String PANES = "io.github.yishisanren.panes";
     private static final String SYSTEMUI = "com.android.systemui";
+    /** 本模块自身包名；方案 B 用于在格窗进程里隐藏它，绕过篡改检测。 */
+    private static final String MODULE_PKG = "com.example.panesunlock";
 
     /**
      * 格窗宿主里真正的授权闸门：混淆类 wg（默认包），run 在 SystemUI 进程。
@@ -83,6 +85,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
             // 真正放行功能：SystemUI 里的 wg 授权校验
             hookPanesLicense(lpparam);
+            // 方案 B：隐藏本模块包，使格窗的模块检测枚举不到
+            hookHideModulePackage(lpparam);
         }
 
         // 通用应用规则（可在模块 App 里按包名开关）
@@ -725,6 +729,50 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             XposedBridge.log("[PanesUnlock] 已监听格窗宿主类的加载");
         } catch (Throwable t) {
             XposedBridge.log("[PanesUnlock] 注册授权类监听失败: " + t);
+        }
+    }
+
+    /**
+     * 方案 B：在格窗 App / SystemUI 宿主进程里，把本模块包（com.example.panesunlock）
+     * 从 PackageManager 的查询结果中剔除。格窗的篡改检测
+     * （Liinhapqy.gmqotxpug）正是通过 getInstalledApplications 枚举已装应用、
+     * 再检查 xposedmodule + xposedscope 来发现本模块的——只要枚举不到，就不会报警。
+     * 即使未来格窗改成"凡 xposedmodule 即报警"也能挡住（因为包本身被隐藏）。
+     */
+    private static void hookHideModulePackage(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            Class<?> apm = XposedHelpers.findClass(
+                    "android.app.ApplicationPackageManager", lp.classLoader);
+            XC_MethodHook filter = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    Object r = p.getResult();
+                    if (!(r instanceof List)) return;
+                    List<?> list = (List<?>) r;
+                    try {
+                        list.removeIf(o -> o != null && MODULE_PKG.equals(
+                                XposedHelpers.getObjectField(o, "packageName")));
+                    } catch (Throwable ignored) {
+                        // 个别 ROM 返回不可变列表，忽略即可
+                    }
+                }
+            };
+            XposedBridge.hookAllMethods(apm, "getInstalledApplications", filter);
+            XposedBridge.hookAllMethods(apm, "getInstalledPackages", filter);
+            // getPackageInfo 直接抛 NameNotFound，让检测拿不到本模块信息
+            XposedBridge.hookAllMethods(apm, "getPackageInfo", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args.length > 0 && MODULE_PKG.equals(p.args[0])) {
+                        p.setThrowable(
+                                new android.content.pm.PackageManager.NameNotFoundException(MODULE_PKG));
+                    }
+                }
+            });
+            XposedBridge.log("[PanesUnlock] 已隐藏模块包 " + MODULE_PKG
+                    + "（防格窗篡改检测），进程 " + lp.packageName);
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 隐藏模块包失败: " + t);
         }
     }
 
