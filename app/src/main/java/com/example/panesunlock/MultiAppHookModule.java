@@ -51,6 +51,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             "io.github.lujinxin.nextep.systemui.NeXtepWindowController";
     private static final String PANES_TOOLS_CLASS =
             "io.github.lujinxin.nextep.systemui.WorkbenchToolsController";
+    /** App 侧场景编辑卡：scenesAllowed() 为 false 时保存≥2场景会弹“格窗试用已结束”对话框。 */
+    private static final String PANES_SETTINGS_CARD_CLASS =
+            "io.github.lujinxin.nextep.config.WorkbenchSettingsCard";
     /** 已经挂过的类：格窗会用自己的 ClassLoader 多次加载同一份 dex，必须逐个副本都挂。 */
     private static final java.util.Set<Class<?>> LICENSE_HOOKED =
             java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Class<?>, Boolean>());
@@ -84,6 +87,12 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 hookBundle(baseBundle);
             } catch (Throwable ignored) {
                 // 框架类必然存在
+            }
+            // Bundle 可能自己重写了这些 getter，单独再 hook 一次，确保 LICENSE_* 强制生效
+            try {
+                Class<?> bundle = XposedHelpers.findClass("android.os.Bundle", lpparam.classLoader);
+                hookBundle(bundle);
+            } catch (Throwable ignored) {
             }
             // 真正放行功能：SystemUI 里的 wg 授权校验
             hookPanesLicense(lpparam);
@@ -666,13 +675,25 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
         };
 
-        XposedHelpers.findAndHookMethod(baseBundle, "containsKey", String.class, boolHook);
-        XposedHelpers.findAndHookMethod(baseBundle, "getBoolean", String.class, boolHook);
-        XposedHelpers.findAndHookMethod(baseBundle, "getBoolean", String.class, boolean.class, boolHook);
-        XposedHelpers.findAndHookMethod(baseBundle, "getLong", String.class, longHook);
-        XposedHelpers.findAndHookMethod(baseBundle, "getLong", String.class, long.class, longHook);
-        XposedHelpers.findAndHookMethod(baseBundle, "getString", String.class, strHook);
-        XposedHelpers.findAndHookMethod(baseBundle, "getString", String.class, String.class, strHook);
+        hookIfPresent(baseBundle, boolHook, "containsKey", String.class);
+        hookIfPresent(baseBundle, boolHook, "getBoolean", String.class);
+        hookIfPresent(baseBundle, boolHook, "getBoolean", String.class, boolean.class);
+        hookIfPresent(baseBundle, longHook, "getLong", String.class);
+        hookIfPresent(baseBundle, longHook, "getLong", String.class, long.class);
+        hookIfPresent(baseBundle, strHook, "getString", String.class);
+        hookIfPresent(baseBundle, strHook, "getString", String.class, String.class);
+    }
+
+    /** 逐个方法 try/catch：Bundle 与 BaseBundle 可能各自声明这些 getter，缺失不影响其它。 */
+    private static void hookIfPresent(Class<?> c, XC_MethodHook h, String name, Class<?>... pts) {
+        try {
+            Object[] args = new Object[pts.length + 1];
+            System.arraycopy(pts, 0, args, 0, pts.length);
+            args[pts.length] = h;
+            XposedHelpers.findAndHookMethod(c, name, args);
+        } catch (Throwable ignored) {
+            // 该方法未在此类声明（由父类提供）时跳过
+        }
     }
 
     // ---------------- 格窗真正的授权闸门（SystemUI 侧 wg） ----------------
@@ -688,7 +709,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         XposedBridge.log("[PanesUnlock] 已注入进程 " + lp.packageName + " / " + lp.processName);
         for (String name : new String[]{
                 PANES_LICENSE_CLASS, PANES_LICENSE_STATE_CLASS,
-                PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS}) {
+                PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS}) {
             try {
                 installForClass(XposedHelpers.findClass(name, lp.classLoader));
             } catch (Throwable ignored) {
@@ -710,6 +731,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             hookLicenseManager(c);
         } else if (PANES_TOOLS_CLASS.equals(n)) {
             hookTools(c);
+        } else if (PANES_SETTINGS_CARD_CLASS.equals(n)) {
+            hookScenesGate(c);
         }
     }
 
@@ -829,10 +852,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         LICENSE_HOOKED.add(clazz);
         XC_MethodHook forceTrue = new XC_MethodHook() {
             @Override
-            protected void afterHookedMethod(MethodHookParam p) {
-                if (p.getResult() instanceof Boolean) {
-                    p.setResult(Boolean.TRUE);
-                }
+            protected void beforeHookedMethod(MethodHookParam p) {
+                // before 直接短路：既放行功能，又避免 paidAllowed 内部把解锁弹框 post 出去
+                p.setResult(Boolean.TRUE);
             }
         };
         int ok = 0;
@@ -864,6 +886,33 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[PanesUnlock] 屏蔽解锁提示失败: " + t);
         }
+    }
+
+    /**
+     * App 侧场景编辑卡：强制 scenesAllowed()=true。
+     * SceneComposerDialog.save() 在“场景数≥2 且 scenesAllowed()==false”时会弹
+     * “格窗试用已结束”对话框（unlock_prompt_title/message），短路此方法即可彻底关闭。
+     */
+    private static synchronized void hookScenesGate(Class<?> clazz) {
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
+        LICENSE_HOOKED.add(clazz);
+        XC_MethodHook forceTrue = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(Boolean.TRUE);
+            }
+        };
+        int ok = 0;
+        for (String name : new String[]{"scenesAllowed", "access$scenesAllowed"}) {
+            try {
+                XposedBridge.hookAllMethods(clazz, name, forceTrue);
+                ok++;
+            } catch (Throwable t) {
+                XposedBridge.log("[PanesUnlock] hook " + name + " 失败: " + t);
+            }
+        }
+        XposedBridge.log("[PanesUnlock] 多场景闸门已放行 " + ok + " 个方法（"
+                + clazz.getClassLoader() + "）");
     }
 
     /**
