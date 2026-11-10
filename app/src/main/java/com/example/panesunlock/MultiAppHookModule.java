@@ -69,6 +69,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             new java.util.concurrent.ConcurrentHashMap<String, Class<?>>();
     private static volatile ClassLoader LP_CLASS_LOADER;
     private static volatile boolean LICENSE_DISCOVERED = false;
+    /** 记录见过的 ClassLoader：授权类可能在其加载器里，发现时逐个尝试 findClass。 */
+    private static final java.util.Set<ClassLoader> SEEN_LOADERS =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<ClassLoader, Boolean>());
 
     private static List<HookConf.AppEntry> CONFIG;
     private static XSharedPreferences XPREFS;
@@ -109,6 +112,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             hookPanesLicense(lpparam);
             // 抗混淆兜底：直接拦截"格窗试用已结束"弹框（不依赖类名）
             installDialogSuppressor();
+            installToastSuppressor();
             // 方案 B：隐藏本模块包，使格窗的模块检测枚举不到
             // 仅在格窗 App / SystemUI 做，避免影响 system_server 的包管理
             if (PANES.equals(pkg) || SYSTEMUI.equals(pkg)) {
@@ -748,6 +752,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static Class<?> findLoaded(String name) {
         Class<?> c = CLASS_CACHE.get(name);
         if (c != null) return c;
+        for (ClassLoader loader : SEEN_LOADERS) {
+            try {
+                Class<?> x = XposedHelpers.findClass(name, loader);
+                if (x != null) return x;
+            } catch (Throwable ignored) {
+            }
+        }
         ClassLoader cl = LP_CLASS_LOADER;
         if (cl != null) {
             try {
@@ -775,7 +786,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 String cn = e.getClassName();
                 if (cn == null || isFramework(cn)) continue;
                 Class<?> c = findLoaded(cn);
-                if (c != null) {
+                if (c != null && hasNoArgBoolean(c)) {
                     hookLicenseManager(c);
                     LICENSE_DISCOVERED = true;
                     XposedBridge.log("[PanesUnlock] 动态发现授权类: " + cn);
@@ -784,6 +795,20 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    /** 授权类特征：至少有一个无参 boolean 方法（已解锁/试用有效等）。 */
+    private static boolean hasNoArgBoolean(Class<?> c) {
+        try {
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                if (m.getParameterCount() == 0 && m.getReturnType() == boolean.class
+                        && !m.isSynthetic() && !m.isBridge()) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     /** 在框架 SharedPreferences 读取授权键时，同样触发授权类动态发现。 */
@@ -823,15 +848,12 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam p) {
                     try {
                         android.app.Dialog d = (android.app.Dialog) p.thisObject;
-                        android.view.View tv = d.findViewById(android.R.id.title);
-                        android.view.View mv = d.findViewById(android.R.id.message);
-                        CharSequence title = (tv instanceof android.widget.TextView)
-                                ? ((android.widget.TextView) tv).getText() : null;
-                        CharSequence msg = (mv instanceof android.widget.TextView)
-                                ? ((android.widget.TextView) mv).getText() : null;
-                        boolean hit = (title != null && title.toString().contains("格窗试用已结束"))
-                                || (msg != null && (msg.toString().contains("解锁后，视频和游戏置顶播放")
-                                || msg.toString().contains("解锁后可以继续置顶")));
+                        Object decor = (d.getWindow() != null) ? d.getWindow().getDecorView() : null;
+                        StringBuilder sb = new StringBuilder();
+                        collectText(decor, sb);
+                        String s = sb.toString();
+                        boolean hit = s.contains("格窗试用已结束")
+                                || (s.contains("解锁后") && s.contains("置顶"));
                         if (hit) {
                             d.dismiss();
                             XposedBridge.log("[PanesUnlock] 已拦截解锁弹框");
@@ -845,6 +867,70 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("[PanesUnlock] 安装弹框拦截失败: " + t);
         }
+    }
+
+    /** 抗混淆兜底：拦截含“试用 + 置顶/解锁”的 Toast（如“试用已结束，解锁后可以继续置顶”）。 */
+    private static void installToastSuppressor() {
+        try {
+            Class<?> toastCls = XposedHelpers.findClass("android.widget.Toast", LP_CLASS_LOADER);
+            XC_MethodHook hook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        CharSequence t = toastText(p.thisObject);
+                        if (t == null) return;
+                        String s = t.toString();
+                        if (s.contains("试用") && (s.contains("置顶") || s.contains("解锁"))) {
+                            p.setResult(null);
+                            XposedBridge.log("[PanesUnlock] 已拦截试用 Toast: " + s);
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            };
+            XposedBridge.hookAllMethods(toastCls, "show", hook);
+            XposedBridge.log("[PanesUnlock] 已安装试用 Toast 拦截");
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 安装 Toast 拦截失败: " + t);
+        }
+    }
+
+    private static CharSequence toastText(Object toast) {
+        try {
+            return viewText(XposedHelpers.getObjectField(toast, "mNextView"));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void collectText(Object v, StringBuilder sb) {
+        if (v == null) return;
+        if (v instanceof android.widget.TextView) {
+            CharSequence t = ((android.widget.TextView) v).getText();
+            if (t != null) sb.append(t).append('\n');
+            return;
+        }
+        if (v instanceof android.view.ViewGroup) {
+            android.view.ViewGroup g = (android.view.ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                collectText(g.getChildAt(i), sb);
+            }
+        }
+    }
+
+    private static CharSequence viewText(Object v) {
+        if (v == null) return null;
+        if (v instanceof android.widget.TextView) {
+            return ((android.widget.TextView) v).getText();
+        }
+        if (v instanceof android.view.ViewGroup) {
+            android.view.ViewGroup g = (android.view.ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                CharSequence t = viewText(g.getChildAt(i));
+                if (t != null && t.length() > 0) return t;
+            }
+        }
+        return null;
     }
 
     // ---------------- 格窗真正的授权闸门（SystemUI 侧 wg） ----------------
@@ -929,6 +1015,10 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 protected void afterHookedMethod(MethodHookParam p) {
                     Object r = p.getResult();
                     if (!(r instanceof Class)) return;
+                    Object self = p.thisObject;
+                    if (self instanceof ClassLoader && SEEN_LOADERS.size() < 2000) {
+                        SEEN_LOADERS.add((ClassLoader) self);
+                    }
                     Class<?> c = (Class<?>) r;
                     String n = c.getName();
                     cacheClass(n, c);
