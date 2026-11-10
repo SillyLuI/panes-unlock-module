@@ -898,7 +898,21 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 取 Toast 文案。
+     *
+     * Android 12+ 起，makeText(Context, CharSequence, int) 造的文本 Toast 由 SystemUI 渲染，
+     * 应用侧 mNextView 为 null，文案只保存在 mText（getText()）里；老系统/自定义 View 的
+     * Toast 才需要从 mNextView 树里找 TextView。两条路都要试，否则新版系统上完全拦不到。
+     */
     private static CharSequence toastText(Object toast) {
+        try {
+            Object t = XposedHelpers.callMethod(toast, "getText");
+            if (t instanceof CharSequence && ((CharSequence) t).length() > 0) {
+                return (CharSequence) t;
+            }
+        } catch (Throwable ignored) {
+        }
         try {
             return viewText(XposedHelpers.getObjectField(toast, "mNextView"));
         } catch (Throwable ignored) {
