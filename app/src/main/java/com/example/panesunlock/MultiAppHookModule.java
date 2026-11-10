@@ -45,8 +45,10 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * 这就是“显示已解锁、功能没效果”的根因。
      */
     private static final String PANES_LICENSE_CLASS = "wg";
-    /** 格窗授权状态类（默认包），决定 LICENSE_UNLOCKED / 试用有效性；3.4.9 起试用改签名态、走服务端校验。 */
-    private static final String PANES_LICENSE_STATE_CLASS = "Leerwybvpn";
+    /** 各版本的授权状态类混淆名（R8 每版不同）：3.4.9 / 3.5.0 / 3.5.6。 */
+    private static final String[] LICENSE_STATE_CLASSES = {
+            "Leerwybvpn", "kjfohwiof", "uumfko"
+    };
     private static final String PANES_CONTROLLER_CLASS =
             "io.github.lujinxin.nextep.systemui.NeXtepWindowController";
     private static final String PANES_TOOLS_CLASS =
@@ -880,7 +882,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                         CharSequence t = toastText(p.thisObject);
                         if (t == null) return;
                         String s = t.toString();
-                        if (s.contains("试用") && (s.contains("置顶") || s.contains("解锁"))) {
+                        if (s.contains("试用") && (s.contains("置顶") || s.contains("解锁")
+                                || s.contains("剩") || s.contains("小时"))) {
                             p.setResult(null);
                             XposedBridge.log("[PanesUnlock] 已拦截试用 Toast: " + s);
                         }
@@ -943,8 +946,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * 只把 wg.a()（功能是否放行）和 wg.c()（是否已购买）强制为 true。
      */
     private static final String[] TARGET_CLASSES = {
-            PANES_LICENSE_CLASS, PANES_LICENSE_STATE_CLASS,
-            PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS
+            PANES_LICENSE_CLASS,
+            PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS,
+            "Leerwybvpn", "kjfohwiof", "uumfko"
     };
     /** 防止 installAllFromLoader 触发的 loadClass 再次进入而无限递归。 */
     private static final ThreadLocal<Boolean> EXPANDING = new ThreadLocal<Boolean>();
@@ -987,6 +991,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         return false;
     }
 
+    private static boolean isLicenseStateClass(String n) {
+        for (String name : LICENSE_STATE_CLASSES) {
+            if (name.equals(n)) return true;
+        }
+        return false;
+    }
+
     /** 按类名分派到对应的 hook 安装逻辑。 */
     private static void installForClass(Class<?> c) {
         if (c == null) return;
@@ -995,7 +1006,7 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             installLicenseHooks(c);
         } else if (PANES_CONTROLLER_CLASS.equals(n)) {
             hookController(c);
-        } else if (PANES_LICENSE_STATE_CLASS.equals(n)) {
+        } else if (isLicenseStateClass(n)) {
             hookLicenseManager(c);
         } else if (PANES_TOOLS_CLASS.equals(n)) {
             hookTools(c);
@@ -1016,8 +1027,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                     Object r = p.getResult();
                     if (!(r instanceof Class)) return;
                     Object self = p.thisObject;
-                    if (self instanceof ClassLoader && SEEN_LOADERS.size() < 2000) {
-                        SEEN_LOADERS.add((ClassLoader) self);
+                    if (self instanceof ClassLoader) {
+                        ClassLoader cl = (ClassLoader) self;
+                        if (!SEEN_LOADERS.contains(cl) && SEEN_LOADERS.size() < 2000) {
+                            SEEN_LOADERS.add(cl);
+                            // 新加载器首次出现：立刻在其中挂载目标类（含已加载的授权类）
+                            installAllFromLoader(cl);
+                        }
                     }
                     Class<?> c = (Class<?>) r;
                     String n = c.getName();
@@ -1233,14 +1249,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         };
         int ok = 0;
         for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
-            if (m.getParameterCount() != 0) continue;
             if (m.isSynthetic() || m.isBridge()) continue;
             Class<?> rt = m.getReturnType();
             try {
                 if (rt == boolean.class) {
                     XposedBridge.hookMethod(m, boolTrue);
                     ok++;
-                } else if (rt == int.class) {
+                } else if (rt == int.class && m.getParameterCount() == 0) {
                     XposedBridge.hookMethod(m, intUnlocked);
                     ok++;
                 }
