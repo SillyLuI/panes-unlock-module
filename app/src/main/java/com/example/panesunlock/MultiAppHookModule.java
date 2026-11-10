@@ -64,6 +64,12 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static final String K_MACHINE = "io.github.yishisanren.panes.extra.LICENSE_MACHINE";
     private static final long TRIAL_FOREVER = 4102444800000L; // 2100-01-01
 
+    /** 已加载类名→Class 缓存：R8 每版改名，靠它从调用栈“按名字”找回授权类。 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Class<?>> CLASS_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<String, Class<?>>();
+    private static volatile ClassLoader LP_CLASS_LOADER;
+    private static volatile boolean LICENSE_DISCOVERED = false;
+
     private static List<HookConf.AppEntry> CONFIG;
     private static XSharedPreferences XPREFS;
     private static String LOADED_USER_JSON;
@@ -101,6 +107,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
             // 真正放行功能：格窗授权校验（App / SystemUI / system_server）
             hookPanesLicense(lpparam);
+            // 抗混淆兜底：直接拦截"格窗试用已结束"弹框（不依赖类名）
+            installDialogSuppressor();
             // 方案 B：隐藏本模块包，使格窗的模块检测枚举不到
             // 仅在格窗 App / SystemUI 做，避免影响 system_server 的包管理
             if (PANES.equals(pkg) || SYSTEMUI.equals(pkg)) {
@@ -683,6 +691,19 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
         };
 
+        // 动态发现：授权类在写入 LICENSE_UNLOCKED / LICENSE_TRIAL 时，从调用栈认出它并挂钩
+        XC_MethodHook putDiscover = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                if (p.args != null && p.args.length > 0 && p.args[0] instanceof String) {
+                    String k = (String) p.args[0];
+                    if (K_UNLOCKED.equals(k) || K_TRIAL.equals(k)) {
+                        discoverLicenseFromStack();
+                    }
+                }
+            }
+        };
+
         hookIfPresent(baseBundle, boolHook, "containsKey", String.class);
         hookIfPresent(baseBundle, boolHook, "getBoolean", String.class);
         hookIfPresent(baseBundle, boolHook, "getBoolean", String.class, boolean.class);
@@ -690,6 +711,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         hookIfPresent(baseBundle, longHook, "getLong", String.class, long.class);
         hookIfPresent(baseBundle, strHook, "getString", String.class);
         hookIfPresent(baseBundle, strHook, "getString", String.class, String.class);
+        hookIfPresent(baseBundle, putDiscover, "putBoolean", String.class, boolean.class);
+        hookIfPresent(baseBundle, putDiscover, "putLong", String.class, long.class);
     }
 
     /** 逐个方法 try/catch：Bundle 与 BaseBundle 可能各自声明这些 getter，缺失不影响其它。 */
@@ -701,6 +724,126 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(c, name, args);
         } catch (Throwable ignored) {
             // 该方法未在此类声明（由父类提供）时跳过
+        }
+    }
+
+    /** 线程安全地把类记入缓存（跳过框架类，省内存）。 */
+    private static void cacheClass(String name, Class<?> c) {
+        if (name == null || c == null) return;
+        if (isFramework(name)) return;
+        if (CLASS_CACHE.size() < 60000) {
+            CLASS_CACHE.put(name, c);
+        }
+    }
+
+    private static boolean isFramework(String cn) {
+        if (cn == null) return true;
+        return cn.startsWith("android.") || cn.startsWith("java.") || cn.startsWith("javax.")
+                || cn.startsWith("dalvik.") || cn.startsWith("libcore.") || cn.startsWith("sun.")
+                || cn.startsWith("com.android.") || cn.startsWith("kotlin.")
+                || cn.startsWith("org.jetbrains.") || cn.startsWith("org.json.")
+                || cn.startsWith("de.robv.android.xposed.") || cn.startsWith("com.example.panesunlock.");
+    }
+
+    private static Class<?> findLoaded(String name) {
+        Class<?> c = CLASS_CACHE.get(name);
+        if (c != null) return c;
+        ClassLoader cl = LP_CLASS_LOADER;
+        if (cl != null) {
+            try {
+                return Class.forName(name, false, cl);
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            return Class.forName(name, false, Thread.currentThread().getContextClassLoader());
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    /**
+     * 从调用栈里找出“非框架”的调用方（即格窗授权类），并给它挂上强制已解锁。
+     * 触发点：Bundle.putBoolean(LICENSE_UNLOCKED) 或 SharedPreferences 读授权键。
+     * 这样不依赖 R8 每版变化的类名。
+     */
+    private static void discoverLicenseFromStack() {
+        if (LICENSE_DISCOVERED) return;
+        try {
+            StackTraceElement[] st = new Throwable().getStackTrace();
+            for (StackTraceElement e : st) {
+                String cn = e.getClassName();
+                if (cn == null || isFramework(cn)) continue;
+                Class<?> c = findLoaded(cn);
+                if (c != null) {
+                    hookLicenseManager(c);
+                    LICENSE_DISCOVERED = true;
+                    XposedBridge.log("[PanesUnlock] 动态发现授权类: " + cn);
+                    return;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 在框架 SharedPreferences 读取授权键时，同样触发授权类动态发现。 */
+    private void installDiscoveryHooks() {
+        try {
+            Class<?> spi = XposedHelpers.findClass("android.app.SharedPreferencesImpl", LP_CLASS_LOADER);
+            XC_MethodHook spHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args != null && p.args.length > 0 && p.args[0] instanceof String) {
+                        String k = (String) p.args[0];
+                        if (k != null && (k.startsWith("panes_unlock_v1") || k.startsWith("panes_trial_v1")
+                                || k.startsWith("panes_license_v1") || k.startsWith("panes_rcpt_v")
+                                || k.startsWith("panes_denied_v1"))) {
+                            discoverLicenseFromStack();
+                        }
+                    }
+                }
+            };
+            hookIfPresent(spi, spHook, "getString", String.class, String.class);
+            hookIfPresent(spi, spHook, "getString", String.class);
+            XposedBridge.log("[PanesUnlock] 已安装授权类动态发现（SharedPreferences）");
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 安装 SP 发现失败: " + t);
+        }
+    }
+
+    /**
+     * 抗混淆兜底：任何版本的“格窗试用已结束”弹框，在 Dialog.show 后按标题/正文文案识别并关闭。
+     * 只针对该特定文案，不影响其它对话框。
+     */
+    private static void installDialogSuppressor() {
+        try {
+            Class<?> dialogCls = XposedHelpers.findClass("android.app.Dialog", LP_CLASS_LOADER);
+            XC_MethodHook hook = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        android.app.Dialog d = (android.app.Dialog) p.thisObject;
+                        android.view.View tv = d.findViewById(android.R.id.title);
+                        android.view.View mv = d.findViewById(android.R.id.message);
+                        CharSequence title = (tv instanceof android.widget.TextView)
+                                ? ((android.widget.TextView) tv).getText() : null;
+                        CharSequence msg = (mv instanceof android.widget.TextView)
+                                ? ((android.widget.TextView) mv).getText() : null;
+                        boolean hit = (title != null && title.toString().contains("格窗试用已结束"))
+                                || (msg != null && (msg.toString().contains("解锁后，视频和游戏置顶播放")
+                                || msg.toString().contains("解锁后可以继续置顶")));
+                        if (hit) {
+                            d.dismiss();
+                            XposedBridge.log("[PanesUnlock] 已拦截解锁弹框");
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            };
+            XposedBridge.hookAllMethods(dialogCls, "show", hook);
+            XposedBridge.log("[PanesUnlock] 已安装解锁弹框拦截");
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 安装弹框拦截失败: " + t);
         }
     }
 
@@ -722,8 +865,10 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
 
     private void hookPanesLicense(XC_LoadPackage.LoadPackageParam lp) {
         XposedBridge.log("[PanesUnlock] 已注入进程 " + lp.packageName + " / " + lp.processName);
+        LP_CLASS_LOADER = lp.classLoader;
         installAllFromLoader(lp.classLoader);
         installLicenseClassWatcher();
+        installDiscoveryHooks();
     }
 
     /**
@@ -785,7 +930,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                     Object r = p.getResult();
                     if (!(r instanceof Class)) return;
                     Class<?> c = (Class<?>) r;
-                    if (!isTarget(c.getName())) return;
+                    String n = c.getName();
+                    cacheClass(n, c);
+                    if (!isTarget(n)) return;
                     // 命中任一目标类：用它自己的加载器把其余目标类一并补挂（含已提前加载的）
                     installAllFromLoader(c.getClassLoader());
                 }
@@ -987,8 +1134,11 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         };
         XC_MethodHook intUnlocked = new XC_MethodHook() {
             @Override
-            protected void beforeHookedMethod(MethodHookParam p) {
-                p.setResult(Integer.valueOf(2)); // 非 0 即代表已授权
+            protected void afterHookedMethod(MethodHookParam p) {
+                Object r = p.getResult();
+                if (r instanceof Integer && ((Integer) r).intValue() == 0) {
+                    p.setResult(Integer.valueOf(2)); // 仅把 0 改成非 0，避免破坏 epochDay 等正常 int
+                }
             }
         };
         int ok = 0;
