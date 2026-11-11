@@ -1030,7 +1030,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static final String[] TARGET_CLASSES = {
             PANES_LICENSE_CLASS,
             PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS,
-            "Leerwybvpn", "kjfohwiof", "uumfko"
+            "Leerwybvpn", "kjfohwiof", "uumfko",
+            "zbwqbndju"   // 3.5.8 的授权状态类（libowuke 功能闸门）
     };
     /** 防止 installAllFromLoader 触发的 loadClass 再次进入而无限递归。 */
     private static final ThreadLocal<Boolean> EXPANDING = new ThreadLocal<Boolean>();
@@ -1086,6 +1087,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         String n = c.getName();
         if (PANES_LICENSE_CLASS.equals(n)) {
             installLicenseHooks(c);
+        } else if (PANES_LICENSE_358.equals(n)) {
+            hookPanes358Gate(c);
         } else if (PANES_CONTROLLER_CLASS.equals(n)) {
             hookController(c);
         } else if (isLicenseStateClass(n)) {
@@ -1332,6 +1335,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         int ok = 0;
         for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
             if (m.isSynthetic() || m.isBridge()) continue;
+            // equals 不能碰；njzjcwcy（3.5.8 的“是否非作者构建”）强制 true 会触发篡改告警
+            String mn = m.getName();
+            if ("equals".equals(mn) || "njzjcwcy".equals(mn)) continue;
             Class<?> rt = m.getReturnType();
             try {
                 if (rt == boolean.class) {
@@ -1346,6 +1352,39 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
         }
         XposedBridge.log("[PanesUnlock] 授权状态类已强制已解锁 " + clazz.getName()
+                + "（" + ok + " 个方法，" + clazz.getClassLoader() + "）");
+    }
+
+    /** 3.5.8 的授权状态类（对应 3.5.6 的 uumfko），R8 改名，按已知名精确放行。 */
+    private static final String PANES_LICENSE_358 = "zbwqbndju";
+
+    /**
+     * 3.5.8 的功能闸门：zbwqbndju.libowuke(功能枚举)Z 是“该功能是否可用”的总入口，
+     * 6 窗口 / 视频置顶横屏 / 场景数 全部经它（ozauid.llrerdjey、xhkagk、vnzrdyem 都调它）。
+     *
+     * 这里只精确放行 libowuke（闸门）、jcfquw（试用有效）、fvloxrg（全功能已购）、
+     * txcjrur（签名自检），刻意不碰 njzjcwcy()——它返回“是否非作者构建”，
+     * 强制 true 反而会触发“安装包不是官方版本”。
+     */
+    private static synchronized void hookPanes358Gate(Class<?> clazz) {
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
+        LICENSE_HOOKED.add(clazz);
+        XC_MethodHook forceTrue = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(Boolean.TRUE);
+            }
+        };
+        int ok = 0;
+        for (String name : new String[]{"libowuke", "jcfquw", "fvloxrg", "txcjrur"}) {
+            try {
+                XposedBridge.hookAllMethods(clazz, name, forceTrue);
+                ok++;
+            } catch (Throwable t) {
+                XposedBridge.log("[PanesUnlock] hook " + name + " 失败: " + t);
+            }
+        }
+        XposedBridge.log("[PanesUnlock] 3.5.8 功能闸门已放行 " + clazz.getName()
                 + "（" + ok + " 个方法，" + clazz.getClassLoader() + "）");
     }
 
