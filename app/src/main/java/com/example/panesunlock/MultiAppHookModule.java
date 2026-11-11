@@ -115,6 +115,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             // 抗混淆兜底：直接拦截"格窗试用已结束"弹框（不依赖类名）
             installDialogSuppressor();
             installToastSuppressor();
+            // 3.5.8：补全"签名证据"集合，绕开"安装包不是官方版本"判定
+            installCrackEvidencePatch();
             // 方案 B：隐藏本模块包，使格窗的模块检测枚举不到
             // 仅在格窗 App / SystemUI 做，避免影响 system_server 的包管理
             if (PANES.equals(pkg) || SYSTEMUI.equals(pkg)) {
@@ -871,6 +873,48 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         }
     }
 
+    /** 3.5.8 新增的“改签名/非官方安装包”判定所依赖的两个证据集合 key。 */
+    private static final String EV_P = "panes_ev_p";
+    private static final String EV_S = "panes_ev_s";
+
+    /**
+     * 3.5.8 新增：cywudvohw.ozauid 把 panes_ev_p / panes_ev_s 两个“签名证据”集合交给
+     * huuhkuxxl.lqwsppl 判定 —— 两个集合元素都小于 2 且签名自检失败时返回“异常”，
+     * ozauid.eutgse 就弹“安装包不是官方版本”并且不加载工作台。
+     *
+     * 这里不动任何混淆类，直接在 SharedPreferences 读取层把这两个 key 补成 2 个元素
+     * （元素需能解析成整数，判定只看 size），判定就落回“正常/官方”，跨版本可用。
+     */
+    private static void installCrackEvidencePatch() {
+        try {
+            Class<?> spImpl = XposedHelpers.findClass("android.app.SharedPreferencesImpl", null);
+            XposedBridge.hookAllMethods(spImpl, "getStringSet", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        if (p.args == null || p.args.length < 1) return;
+                        Object k = p.args[0];
+                        if (!(k instanceof String)) return;
+                        String key = (String) k;
+                        if (!EV_P.equals(key) && !EV_S.equals(key)) return;
+                        java.util.Set<String> fake = new java.util.HashSet<>();
+                        fake.add("1");
+                        fake.add("2");
+                        p.setResult(fake);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+            XposedBridge.log("[PanesUnlock] 已安装签名证据补全（panes_ev_p/s）");
+        } catch (Throwable t) {
+            XposedBridge.log("[PanesUnlock] 安装签名证据补全失败: " + t);
+        }
+    }
+
+    /** Toast 实例 → 文案。文本 Toast 在部分 ROM 上 mNextView/mText 都取不到，靠 makeText 兜底记录。 */
+    private static final Map<Object, String> TOAST_TEXT =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Object, String>());
+
     /** 抗混淆兜底：拦截含“试用 + 置顶/解锁”的 Toast（如“试用已结束，解锁后可以继续置顶”）。 */
     private static void installToastSuppressor() {
         try {
@@ -891,6 +935,23 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                     }
                 }
             };
+            // 记录 makeText 的文案：show() 时再按实例取，绕开各家 ROM 字段差异
+            XposedBridge.hookAllMethods(toastCls, "makeText", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        Object toast = p.getResult();
+                        if (toast == null || p.args == null) return;
+                        for (Object a : p.args) {
+                            if (a instanceof CharSequence) {
+                                TOAST_TEXT.put(toast, a.toString());
+                                break;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
             XposedBridge.hookAllMethods(toastCls, "show", hook);
             XposedBridge.log("[PanesUnlock] 已安装试用 Toast 拦截");
         } catch (Throwable t) {
@@ -906,6 +967,13 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
      * Toast 才需要从 mNextView 树里找 TextView。两条路都要试，否则新版系统上完全拦不到。
      */
     private static CharSequence toastText(Object toast) {
+        try {
+            String cached = TOAST_TEXT.get(toast);
+            if (cached != null && cached.length() > 0) {
+                return cached;
+            }
+        } catch (Throwable ignored) {
+        }
         try {
             Object t = XposedHelpers.callMethod(toast, "getText");
             if (t instanceof CharSequence && ((CharSequence) t).length() > 0) {
