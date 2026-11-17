@@ -1033,7 +1033,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             "Leerwybvpn", "kjfohwiof", "uumfko",
             "zbwqbndju",  // 3.5.8  授权状态类（libowuke 功能闸门）
             "hkqdgez",    // 3.5.18 授权状态类（aakbvzpyv 功能闸门）
-            "robxfhth"    // 3.5.18 许可校验类（aehkxpgre 功能闸门）
+            "robxfhth",   // 3.5.18 许可校验类（aehkxpgre 功能闸门）
+            "mmuflo"      // 3.5.18 篡改判定结果类（TamperVerdict）
     };
     /** 防止 installAllFromLoader 触发的 loadClass 再次进入而无限递归。 */
     private static final ThreadLocal<Boolean> EXPANDING = new ThreadLocal<Boolean>();
@@ -1092,6 +1093,8 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         } else if (PANES_LICENSE_358.equals(n) || PANES_LICENSE_3518.equals(n)
                 || PANES_LICENSE_3518B.equals(n)) {
             hookPanesGateByShape(c);
+        } else if (PANES_TAMPER_3518.equals(n)) {
+            hookTamperVerdict(c);
         } else if (PANES_CONTROLLER_CLASS.equals(n)) {
             hookController(c);
         } else if (isLicenseStateClass(n)) {
@@ -1367,6 +1370,57 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
     private static final String PANES_LICENSE_358 = "zbwqbndju";
     private static final String PANES_LICENSE_3518 = "hkqdgez";
     private static final String PANES_LICENSE_3518B = "robxfhth";
+
+    /** 3.5.18 的篡改判定结果类（TamperVerdict：tampered/families/modules/coResident/suspects）。 */
+    private static final String PANES_TAMPER_3518 = "mmuflo";
+
+    /**
+     * 3.5.18 新增的“篡改模块检测”：vritflvck 枚举已安装应用 + 扫 /data/app 路径，
+     * 认出正在注入格窗的 Xposed 模块（如别的 hook 模块），生成 TamperVerdict，
+     * 随后 hkqdgez.kzwjrru（上报服务器 + 记状态）、uinafx/debiyml 读 verdict 后
+     * 弹“发现篡改模块”并阻止打开工作台。
+     *
+     * 这里不去藏包名（它还会扫 /data/app 目录和类加载器路径，藏不干净），
+     * 直接让 TamperVerdict 本身“永远干净”：所有无参 boolean 取 false、
+     * 无参 List 给空表。detector 照常跑，但结论永远是未篡改。
+     */
+    private static synchronized void hookTamperVerdict(Class<?> clazz) {
+        if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
+        LICENSE_HOOKED.add(clazz);
+        XC_MethodHook alwaysFalse = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(Boolean.FALSE);
+            }
+        };
+        XC_MethodHook emptyList = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(new java.util.ArrayList<Object>());
+            }
+        };
+        int n = 0;
+        for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
+            if (m.isSynthetic() || m.isBridge()) continue;
+            if (m.getParameterTypes().length != 0) continue;
+            Class<?> rt = m.getReturnType();
+            if (rt == boolean.class) {
+                try {
+                    XposedBridge.hookAllMethods(clazz, m.getName(), alwaysFalse);
+                    n++;
+                } catch (Throwable ignored) {
+                }
+            } else if (java.util.List.class.isAssignableFrom(rt)) {
+                try {
+                    XposedBridge.hookAllMethods(clazz, m.getName(), emptyList);
+                    n++;
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        XposedBridge.log("[PanesUnlock] 篡改判定已置为干净 " + clazz.getName()
+                + "（" + n + " 个方法，" + clazz.getClassLoader() + "）");
+    }
 
     /**
      * 通用“功能闸门”放行：panes 每一版都换一个混淆类承载授权状态，但闸门方法的形状很固定 ——
