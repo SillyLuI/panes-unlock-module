@@ -1031,7 +1031,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             PANES_LICENSE_CLASS,
             PANES_CONTROLLER_CLASS, PANES_TOOLS_CLASS, PANES_SETTINGS_CARD_CLASS,
             "Leerwybvpn", "kjfohwiof", "uumfko",
-            "zbwqbndju"   // 3.5.8 的授权状态类（libowuke 功能闸门）
+            "zbwqbndju",  // 3.5.8  授权状态类（libowuke 功能闸门）
+            "hkqdgez",    // 3.5.18 授权状态类（aakbvzpyv 功能闸门）
+            "robxfhth"    // 3.5.18 许可校验类（aehkxpgre 功能闸门）
     };
     /** 防止 installAllFromLoader 触发的 loadClass 再次进入而无限递归。 */
     private static final ThreadLocal<Boolean> EXPANDING = new ThreadLocal<Boolean>();
@@ -1087,8 +1089,9 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
         String n = c.getName();
         if (PANES_LICENSE_CLASS.equals(n)) {
             installLicenseHooks(c);
-        } else if (PANES_LICENSE_358.equals(n)) {
-            hookPanes358Gate(c);
+        } else if (PANES_LICENSE_358.equals(n) || PANES_LICENSE_3518.equals(n)
+                || PANES_LICENSE_3518B.equals(n)) {
+            hookPanesGateByShape(c);
         } else if (PANES_CONTROLLER_CLASS.equals(n)) {
             hookController(c);
         } else if (isLicenseStateClass(n)) {
@@ -1355,18 +1358,26 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
                 + "（" + ok + " 个方法，" + clazz.getClassLoader() + "）");
     }
 
-    /** 3.5.8 的授权状态类（对应 3.5.6 的 uumfko），R8 改名，按已知名精确放行。 */
+    /**
+     * 承载“功能闸门”的混淆类，每版改名：
+     *   3.5.6  uumfko     dqognbpb(feature)Z
+     *   3.5.8  zbwqbndju  libowuke(feature)Z
+     *   3.5.18 hkqdgez    aakbvzpyv(feature)Z，另有 robxfhth.aehkxpgre(feature)Z
+     */
     private static final String PANES_LICENSE_358 = "zbwqbndju";
+    private static final String PANES_LICENSE_3518 = "hkqdgez";
+    private static final String PANES_LICENSE_3518B = "robxfhth";
 
     /**
-     * 3.5.8 的功能闸门：zbwqbndju.libowuke(功能枚举)Z 是“该功能是否可用”的总入口，
-     * 6 窗口 / 视频置顶横屏 / 场景数 全部经它（ozauid.llrerdjey、xhkagk、vnzrdyem 都调它）。
+     * 通用“功能闸门”放行：panes 每一版都换一个混淆类承载授权状态，但闸门方法的形状很固定 ——
+     * 唯一参数是“功能位枚举”（COMPARE/SCENES/WIDE_VIDEO/PAUSE/TIERS/IMMERSIVE），返回 boolean。
      *
-     * 这里只精确放行 libowuke（闸门）、jcfquw（试用有效）、fvloxrg（全功能已购）、
-     * txcjrur（签名自检），刻意不碰 njzjcwcy()——它返回“是否非作者构建”，
-     * 强制 true 反而会触发“安装包不是官方版本”。
+     * 所以这里按形状匹配整类放行，不再依赖方法名：
+     *   3.5.8  zbwqbndju.libowuke(kvyttad)Z
+     *   3.5.18 hkqdgez.aakbvzpyv(dfbjxgq)Z / robxfhth.aehkxpgre(dfbjxgq)Z
+     * 这样即使方法名再变，只要类名进了 TARGET_CLASSES 就能命中。
      */
-    private static synchronized void hookPanes358Gate(Class<?> clazz) {
+    private static synchronized void hookPanesGateByShape(Class<?> clazz) {
         if (clazz == null || LICENSE_HOOKED.contains(clazz)) return;
         LICENSE_HOOKED.add(clazz);
         XC_MethodHook forceTrue = new XC_MethodHook() {
@@ -1376,15 +1387,28 @@ public class MultiAppHookModule implements IXposedHookLoadPackage {
             }
         };
         int ok = 0;
+        for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
+            if (m.isSynthetic() || m.isBridge()) continue;
+            if (m.getReturnType() != boolean.class) continue;
+            Class<?>[] ps = m.getParameterTypes();
+            if (ps.length != 1 || !ps[0].isEnum()) continue;
+            try {
+                XposedBridge.hookAllMethods(clazz, m.getName(), forceTrue);
+                ok++;
+                XposedBridge.log("[PanesUnlock] 放行闸门 " + clazz.getName() + "."
+                        + m.getName() + "(" + ps[0].getSimpleName() + ")");
+            } catch (Throwable t) {
+                XposedBridge.log("[PanesUnlock] 放行闸门失败 " + m.getName() + ": " + t);
+            }
+        }
+        // 兼容 3.5.8 的按名白名单（试用有效 / 全功能 / 签名自检）
         for (String name : new String[]{"libowuke", "jcfquw", "fvloxrg", "txcjrur"}) {
             try {
                 XposedBridge.hookAllMethods(clazz, name, forceTrue);
-                ok++;
-            } catch (Throwable t) {
-                XposedBridge.log("[PanesUnlock] hook " + name + " 失败: " + t);
+            } catch (Throwable ignored) {
             }
         }
-        XposedBridge.log("[PanesUnlock] 3.5.8 功能闸门已放行 " + clazz.getName()
+        XposedBridge.log("[PanesUnlock] 功能闸门已放行 " + clazz.getName()
                 + "（" + ok + " 个方法，" + clazz.getClassLoader() + "）");
     }
 
